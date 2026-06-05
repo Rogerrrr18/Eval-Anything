@@ -1,0 +1,12 @@
+# Agent Eval Pipeline 依赖
+# 核心依赖（最小化）
+httpx>=0.24.0
+pyyaml>=6.0
+openpyxl>=3.1.0
+pandas>=2.0.0
+
+# 可选依赖（按需启用）
+# aiohttp>=3.9.0         # 高并发异步 HTTP
+# openai>=1.0.0          # OpenAI SDK（如需直接使用）
+# plotly>=5.0.0          # 图表生成
+# jinja2>=3.1.0          # HTML 模板

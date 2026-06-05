@@ -1,0 +1,80 @@
+# 环境配置
+# 每个profile定义一种任务环境，通过 class 字段选择实现类
+# dataset 支持相对路径（相对于项目根目录）和绝对路径
+
+environments:
+
+  # ── 槽位填充-报修 ──
+  slot_filling_xiu:
+    class: "DialogEnvironment"
+    dataset: "datasets/slot_filling/xiu_test.jsonl"
+    description: "报修预约槽位填充"
+    max_steps: 1
+    extra_params:
+      task_type: "slot_filling"
+      intent_filter: "预约维修"
+      slot_keys:
+        - product_name
+        - product_brand
+        - fault_info_desc
+        - product_num
+        - province
+        - city
+        - county
+        - subdistrict
+        - community
+        - book_desc
+        - phone_number
+
+  # ── 槽位填充-报装 ──
+  slot_filling_zhuang:
+    class: "DialogEnvironment"
+    dataset: "datasets/slot_filling/zhuang_test.jsonl"
+    description: "安装预约槽位填充"
+    max_steps: 1
+    extra_params:
+      task_type: "slot_filling"
+      slot_keys:
+        - product_name
+        - product_brand
+        - product_install_mode
+        - product_num
+        - province
+        - city
+        - county
+        - subdistrict
+        - community
+        - book_desc
+        - phone_number
+
+  # ── Excel 数据源示例（兼容 evalv3 格式） ──
+  # 使用现有的 xlsx 测试集，无需手动转格式
+  # 请替换为你的实际 xlsx 文件路径
+  # slot_filling_xiu_excel:
+  #   class: "DialogEnvironment"
+  #   dataset: "/path/to/your/test_dataset.xlsx"
+  #   description: "报修预约槽位填充（Excel数据源）"
+  #   max_steps: 1
+  #   extra_params:
+  #     task_type: "slot_filling"
+  #     intent_filter: "预约维修"
+  #     slot_keys:
+  #       - product_name
+  #       - product_brand
+  #       - fault_info_desc
+  #       - product_num
+  #       - province
+  #       - city
+  #       - county
+  #       - subdistrict
+  #       - community
+  #       - book_desc
+  #       - phone_number
+
+  # ── 自定义环境模板 ──
+  # my_env:
+  #   class: "DialogEnvironment"           # 或 "APIEnvironment" / "ShellEnvironment"
+  #   dataset: "datasets/my_tasks.jsonl"   # .jsonl / .json / .xlsx
+  #   description: "我的自定义环境"
+  #   max_steps: 20
+  #   extra_params: {}

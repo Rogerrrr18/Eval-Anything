@@ -1,0 +1,51 @@
+# Harness 架构配置
+# 每个profile定义一种Agent架构策略，通过 class 字段选择实现类
+
+harness_profiles:
+
+  # ── Raw 基线：直接 prompt-in response-out ──
+  raw:
+    class: "RawHarness"
+    max_steps: 1
+    max_retries: 3
+    timeout_per_step: 60
+    description: "直接 prompt-in / response-out 基线，单次 LLM 调用"
+
+  # ── ReAct：思考-行动循环 ──
+  react:
+    class: "ReActHarness"
+    max_steps: 10
+    max_retries: 3
+    timeout_per_step: 60
+    description: "ReAct 推理+行动循环，逐步解决问题"
+    extra_params:
+      system_prompt: |
+        你是一个智能助手。请按照 Thought/Action 格式逐步解决问题。
+        格式要求:
+        Thought: 你的推理过程
+        Action: <动作类型>[<动作内容>]
+
+        可用动作:
+        - respond[<你的回答>] — 给出最终答案
+        - think[<继续思考>] — 继续推理
+
+        请先输出 Thought，再输出 Action。
+
+  # ── Function Call：原生工具调用 ──
+  function_call:
+    class: "FunctionCallHarness"
+    max_steps: 15
+    max_retries: 3
+    timeout_per_step: 60
+    description: "基于 LLM 原生 tool/function calling 的 Agent"
+    extra_params:
+      tool_choice: "auto"
+
+  # ── 自定义 Harness 模板 ──
+  # my_harness:
+  #   class: "MyCustomHarness"             # 需要在 src/harness/ 下实现
+  #   max_steps: 10
+  #   max_retries: 3
+  #   timeout_per_step: 60
+  #   description: "我的自定义 Harness"
+  #   extra_params: {}

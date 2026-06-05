@@ -1,0 +1,43 @@
+# LLM 端点配置
+# 每个profile定义一个LLM后端，通过 class 字段选择实现类
+# 支持所有 OpenAI API 兼容的推理服务（vLLM / SGLang / LMStudio / Ollama 等）
+#
+# ⚠️ 请勿提交包含真实内网地址的配置到公开仓库！
+# 实际使用时请复制此文件为 llm_profiles.local.yaml 并填入真实地址
+
+llm_profiles:
+
+  # ── DeepSeek V4 Flash（本地 vLLM） ──
+  deepseek_v4_flash:
+    class: "OpenAICompatibleLLM"
+    model_name: "DeepSeek-V4-Flash"
+    endpoint_url: "http://localhost:10814/v1/chat/completions"
+    api_key: "EMPTY"
+    temperature: 0.0
+    max_tokens: 600
+    top_p: 1.0
+    timeout_seconds: 30
+    enable_thinking: false
+    extra_params: {}
+
+  # ── DeepSeek V4 Flash（备选端口） ──
+  deepseek_v4_flash_b:
+    class: "OpenAICompatibleLLM"
+    model_name: "DeepSeek-V4-Flash"
+    endpoint_url: "http://localhost:10815/v1/chat/completions"
+    api_key: "EMPTY"
+    temperature: 0.0
+    max_tokens: 600
+    top_p: 1.0
+    timeout_seconds: 30
+
+  # ── 示例：远程模型 ──
+  # 请替换为你的实际服务地址
+  # remote_model:
+  #   class: "OpenAICompatibleLLM"
+  #   model_name: "your-model-name"
+  #   endpoint_url: "http://your-host:port/v1/chat/completions"
+  #   api_key: "EMPTY"
+  #   temperature: 0.0
+  #   max_tokens: 600
+  #   timeout_seconds: 30

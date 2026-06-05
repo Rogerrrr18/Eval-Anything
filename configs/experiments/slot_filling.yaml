@@ -1,0 +1,44 @@
+# 槽位填充评测实验
+# 指定要测试的 LLM × Harness × Environment 组合
+
+experiment:
+  name: "slot_filling_eval"
+  description: "槽位填充任务评测：对比不同 LLM 和 Harness 架构在报修/报装场景下的表现"
+  seed: 42
+  output_dir: "outputs/slot_filling_eval"
+
+  # 要测试的 LLM（对应 llm_profiles.yaml 中的 key）
+  llm_profiles:
+    - deepseek_v4_flash
+    # - qwen3_4b
+    # - slot_model_int4
+
+  # 要测试的 Harness（对应 harness_profiles.yaml 中的 key）
+  harness_profiles:
+    - raw
+    # - react
+    # - function_call
+
+  # 要测试的环境（对应 environments.yaml 中的 key）
+  environments:
+    - slot_filling_xiu
+    # - slot_filling_zhuang
+    # - slot_filling_xiu_excel
+
+  # 执行参数
+  execution:
+    max_concurrent_tasks: 4       # 单个组合内并行任务数
+    max_concurrent_combos: 1      # 同时运行几个组合（注意GPU显存）
+    task_timeout_seconds: 120     # 单任务超时
+    step_timeout_seconds: 60      # 单步超时
+    retry_on_api_error: 3         # API 错误重试次数
+    retry_backoff_base: 2         # 重试退避基数
+
+  # 报告生成选项
+  reporting:
+    generate_excel: true
+    generate_html_dashboard: true
+    generate_trajectory_jsonl: true
+    generate_case_studies: true
+    generate_charts: true
+    case_study_count: 10
