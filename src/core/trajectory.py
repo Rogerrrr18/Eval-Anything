@@ -63,6 +63,7 @@ class ComboResult:
         avg_latency = sum(t.total_latency_ms for t in self.task_results) / total if total else 0
         avg_tokens = sum(t.total_input_tokens + t.total_output_tokens for t in self.task_results) / total if total else 0
         avg_score = sum(t.scores.get("partial_completion", 0.0) for t in self.task_results) / total if total else 0
+        format_ok = sum(1 for t in self.task_results if t.scores.get("format_compliance", 0.0) > 0.0)
 
         self.summary = {
             "total_tasks": total,
@@ -77,6 +78,7 @@ class ComboResult:
             "avg_latency_ms": avg_latency,
             "avg_tokens": avg_tokens,
             "avg_score": avg_score,
+            "format_compliance_rate": format_ok / total if total else 0,
             "all_correct_rate": success / total if total else 0,
         }
         return self.summary

@@ -6,11 +6,14 @@ Harness 抽象层 — Agent 架构脚手架。
 """
 from __future__ import annotations
 
+import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional, TypeVar
 
 from ..llm.base import BaseLLM
+
+T = TypeVar("T")
 
 
 @dataclass
@@ -117,6 +120,25 @@ class BaseHarness(ABC):
 
     def get_total_latency(self) -> float:
         return self._total_latency_ms
+
+    async def _call_with_retries(
+        self,
+        func: Callable[[], Awaitable[T]],
+        label: str = "LLM call",
+    ) -> T:
+        """执行带重试的 LLM 调用。
+
+        Harness 是最靠近 LLM 的层，放在这里可以覆盖 Raw/ReAct/FunctionCall。
+        """
+        attempts = max(1, self.config.max_retries)
+        for attempt in range(1, attempts + 1):
+            try:
+                return await func()
+            except Exception:
+                if attempt >= attempts:
+                    raise
+                await asyncio.sleep(min(2 ** (attempt - 1), 8))
+        raise RuntimeError(f"{label} failed without an exception")
 
     def _record_step(
         self,

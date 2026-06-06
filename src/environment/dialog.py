@@ -13,6 +13,7 @@ import json
 from typing import Any, Dict, List, Optional
 
 from .base import BaseEnvironment, EnvConfig, EnvStepResult, TaskInstance
+from ..utils.json_utils import robust_json_parse
 
 
 # ── 特殊归一化规则 ──
@@ -54,8 +55,9 @@ class DialogEnvironment(BaseEnvironment):
         self._format_ok = False
         self._field_results = {}
 
-        # 构造返回给 agent 的初始观察
-        return task.prompt
+        # 构造返回给 agent 的初始观察。把输出格式要求放在环境层，
+        # 这样 Raw/ReAct/FunctionCall 都能拿到同一份任务契约。
+        return self._build_task_prompt(task)
 
     async def step(self, action: Any) -> EnvStepResult:
         """处理 agent 的槽位提取结果。
@@ -77,12 +79,12 @@ class DialogEnvironment(BaseEnvironment):
 
         self._raw_output = raw_output
 
-        # 尝试解析 JSON
-        try:
-            parsed = json.loads(raw_output)
+        # 尝试解析 JSON，兼容模型返回 ```json ... ``` 或夹带解释文字的情况。
+        parsed = robust_json_parse(raw_output)
+        if parsed is not None:
             self._extracted_slots = self._flatten_slots(parsed)
             self._format_ok = True
-        except (json.JSONDecodeError, TypeError):
+        else:
             self._extracted_slots = None
             self._format_ok = False
 
@@ -136,7 +138,40 @@ class DialogEnvironment(BaseEnvironment):
         """获取每个字段的正确/错误结果。"""
         return dict(self._field_results)
 
+    def get_info(self) -> Dict[str, Any]:
+        """返回包含评分细节的环境信息。"""
+        info = super().get_info()
+        info.update({
+            "format_ok": self._format_ok,
+            "field_results": dict(self._field_results),
+            "raw_output": self._raw_output,
+            "extracted_slots": self._extracted_slots,
+        })
+        return info
+
     # ── 内部方法 ──
+
+    def _build_task_prompt(self, task: TaskInstance) -> str:
+        """构造带 schema 约束的槽位填充 prompt。"""
+        slot_keys = task.slot_keys or list((task.expected_slots or {}).keys())
+        schema = {key: "" for key in slot_keys}
+        history = task.conversation_history or []
+
+        parts: List[str] = [
+            "请从用户对话中抽取槽位信息，只输出一个合法 JSON 对象。",
+            "不要输出解释、Markdown 或代码块。",
+            f"需要抽取的字段: {', '.join(slot_keys)}",
+            f"JSON 字段模板: {json.dumps(schema, ensure_ascii=False)}",
+        ]
+        if history:
+            parts.append("历史对话:")
+            for msg in history:
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+                parts.append(f"{role}: {content}")
+        parts.append("当前用户输入:")
+        parts.append(task.prompt)
+        return "\n".join(parts)
 
     def _flatten_slots(self, parsed: Dict[str, Any]) -> Dict[str, str]:
         """将嵌套的 JSON 结构展平为 slot_key → value 映射。
@@ -152,9 +187,17 @@ class DialogEnvironment(BaseEnvironment):
             {"product_name": "XX", "province": "XX", ...}
         """
         flat: Dict[str, str] = {}
+        if not isinstance(parsed, dict):
+            return flat
+
+        slot_keys = set(self.current_task.slot_keys or []) if self.current_task else set()
+        for key, value in parsed.items():
+            if key in slot_keys or not isinstance(value, dict):
+                flat[key] = "" if value is None else str(value)
+
         for section in parsed.values():
             if isinstance(section, dict):
-                flat.update({k: str(v) for k, v in section.items()})
+                flat.update({k: "" if v is None else str(v) for k, v in section.items()})
         return flat
 
     def _compare_fields(self) -> Dict[str, bool]:

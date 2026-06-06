@@ -11,10 +11,11 @@ from __future__ import annotations
 import asyncio
 import itertools
 import json
+import logging
 import os
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..llm.base import BaseLLM, LLMConfig
 from ..llm import create_llm
@@ -93,6 +94,7 @@ class Orchestrator:
 
     def __init__(self, config_loader: ConfigLoader):
         self.config_loader = config_loader
+        self.logger = logging.getLogger("agent-eval")
 
     async def run_experiment(self, experiment_config: ExperimentConfig) -> ExperimentResult:
         """运行完整实验。
@@ -117,17 +119,25 @@ class Orchestrator:
         ))
         print(f"共 {len(combos)} 个评测组合\n")
 
-        # 依次运行每个组合（可并行）
+        # 按配置并发运行组合。
         semaphore = asyncio.Semaphore(experiment_config.execution.max_concurrent_combos)
-        combo_results: List[ComboResult] = []
 
-        for idx, (llm_name, harness_name, env_name) in enumerate(combos, 1):
-            print(f"\n[{idx}/{len(combos)}] 运行: LLM={llm_name}, Harness={harness_name}, Env={env_name}")
-            result = await self._run_combo(
-                llm_name, harness_name, env_name, experiment_config
-            )
-            combo_results.append(result)
-            self._print_combo_summary(result)
+        async def _run_indexed_combo(
+            idx: int, combo: Tuple[str, str, str]
+        ) -> ComboResult:
+            llm_name, harness_name, env_name = combo
+            async with semaphore:
+                print(f"\n[{idx}/{len(combos)}] 运行: LLM={llm_name}, Harness={harness_name}, Env={env_name}")
+                result = await self._run_combo(
+                    llm_name, harness_name, env_name, experiment_config
+                )
+                self._print_combo_summary(result)
+                return result
+
+        combo_results = await asyncio.gather(*[
+            _run_indexed_combo(idx, combo)
+            for idx, combo in enumerate(combos, 1)
+        ])
 
         # 汇总
         exp_result = ExperimentResult(
@@ -162,24 +172,31 @@ class Orchestrator:
         env_profile = self.config_loader.get_env_profile(env_name)
 
         llm = _create_llm_from_profile(llm_profile)
-        harness = _create_harness_from_profile(harness_profile, llm)
-        env = _create_env_from_profile(env_profile)
 
         # 加载测试集
         tasks = self._load_tasks(env_profile)
         print(f"  加载 {len(tasks)} 条测试用例")
 
-        # 逐任务运行
-        trajectories: List[Trajectory] = []
-        for task_idx, task in enumerate(tasks):
-            traj = await self._run_single_task(
-                harness, env, task, exp_config, task_idx, len(tasks),
-                llm_name, harness_name, env_name,
-            )
-            trajectories.append(traj)
+        # 按配置并发运行任务。Harness/Environment 都是有状态对象，
+        # 所以每个任务创建独立实例，LLM client 共享。
+        task_semaphore = asyncio.Semaphore(exp_config.execution.max_concurrent_tasks)
 
-        # 清理
-        await llm.close()
+        async def _run_task(task_idx: int, task: TaskInstance) -> Trajectory:
+            async with task_semaphore:
+                harness = _create_harness_from_profile(harness_profile, llm)
+                env = _create_env_from_profile(env_profile)
+                return await self._run_single_task(
+                    harness, env, task, exp_config, task_idx, len(tasks),
+                    llm_name, harness_name, env_name,
+                )
+
+        try:
+            trajectories = await asyncio.gather(*[
+                _run_task(task_idx, task)
+                for task_idx, task in enumerate(tasks)
+            ])
+        finally:
+            await llm.close()
 
         # 汇总
         combo = ComboResult(
@@ -214,15 +231,21 @@ class Orchestrator:
             )
 
             # Agent 产生第一个动作
-            action = await asyncio.wait_for(
-                harness.initial_action(task.prompt),
-                timeout=exp_config.execution.step_timeout_seconds,
+            action = await self._with_retries(
+                lambda: asyncio.wait_for(
+                    harness.initial_action(observation),
+                    timeout=exp_config.execution.step_timeout_seconds,
+                ),
+                retries=exp_config.execution.retry_on_api_error,
+                backoff_base=exp_config.execution.retry_backoff_base,
             )
 
             # Agent loop
             step_count = 0
+            max_steps = min(harness.config.max_steps, env.config.max_steps)
+            last_step_info: Dict[str, Any] = {}
             while not harness.is_finished() and not env.is_done():
-                if step_count >= exp_config.execution.step_timeout_seconds:
+                if step_count >= max_steps:
                     break
                 step_count += 1
 
@@ -230,18 +253,27 @@ class Orchestrator:
                     env.step(action),
                     timeout=exp_config.execution.step_timeout_seconds,
                 )
+                last_step_info = result.info
 
                 if result.terminated or result.truncated:
                     break
 
-                action = await asyncio.wait_for(
-                    harness.next_action(result.observation),
-                    timeout=exp_config.execution.step_timeout_seconds,
+                action = await self._with_retries(
+                    lambda: asyncio.wait_for(
+                        harness.next_action(result.observation),
+                        timeout=exp_config.execution.step_timeout_seconds,
+                    ),
+                    retries=exp_config.execution.retry_on_api_error,
+                    backoff_base=exp_config.execution.retry_backoff_base,
                 )
 
             # 最后一步如果环境还没 done，提交最终动作
             if not env.is_done() and action:
-                await env.step(action)
+                result = await asyncio.wait_for(
+                    env.step(action),
+                    timeout=exp_config.execution.step_timeout_seconds,
+                )
+                last_step_info = result.info
 
         except asyncio.TimeoutError:
             print(f"  [{task_idx+1}/{total_tasks}] 超时: {task.task_id}")
@@ -286,6 +318,7 @@ class Orchestrator:
 
         # 从环境获取详细信息
         env_info = env.get_info()
+        env_info.update(last_step_info)
         field_results = env_info.get("field_results", {})
         format_ok = env_info.get("format_ok", False)
 
@@ -327,6 +360,30 @@ class Orchestrator:
             metadata={"field_results": field_results, "format_ok": format_ok},
         )
 
+    async def _with_retries(
+        self,
+        func,
+        retries: int,
+        backoff_base: float,
+    ) -> Any:
+        """对单步 LLM 调用做指数退避重试。"""
+        attempts = max(1, retries)
+        last_error: Optional[Exception] = None
+        for attempt in range(1, attempts + 1):
+            try:
+                return await func()
+            except Exception as e:
+                last_error = e
+                if attempt >= attempts:
+                    raise
+                delay = backoff_base ** (attempt - 1)
+                self.logger.warning(
+                    "LLM step failed on attempt %s/%s: %s; retrying in %.1fs",
+                    attempt, attempts, e, delay,
+                )
+                await asyncio.sleep(delay)
+        raise last_error or RuntimeError("retry failed without an exception")
+
     def _load_tasks(self, env_profile: EnvironmentProfile) -> List[TaskInstance]:
         """根据环境 profile 加载测试集。
 
@@ -339,15 +396,12 @@ class Orchestrator:
             print(f"  警告: 环境 {env_profile.name} 未配置 dataset，使用空测试集")
             return []
 
-        path = Path(dataset_path)
+        path = Path(dataset_path).expanduser()
+        if not path.is_absolute():
+            path = self.config_loader.project_root / path
         if not path.exists():
-            # 尝试从项目根目录查找
-            alt_path = Path("/home/ai/agent-eval-pipeline") / dataset_path
-            if alt_path.exists():
-                path = alt_path
-            else:
-                print(f"  警告: 数据集文件不存在: {dataset_path}")
-                return []
+            print(f"  警告: 数据集文件不存在: {path}")
+            return []
 
         if path.suffix == ".jsonl":
             return self._load_jsonl(path, env_profile)

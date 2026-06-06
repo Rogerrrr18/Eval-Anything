@@ -21,7 +21,8 @@ class MockLLM(BaseLLM):
 
     def __init__(self, config: LLMConfig):
         super().__init__(config)
-        self._responses: List[str] = []
+        configured = config.extra_params.get("responses", [])
+        self._responses: List[str] = [str(item) for item in configured]
         self._call_log: List[List[Dict[str, str]]] = []
 
     def set_response(self, content: str) -> None:

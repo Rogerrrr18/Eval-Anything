@@ -39,7 +39,10 @@ class RawHarness(BaseHarness):
         # 调用 LLM
         start = time.perf_counter()
         try:
-            response: LLMResponse = await self.llm.chat(messages)
+            response: LLMResponse = await self._call_with_retries(
+                lambda: self.llm.chat(messages),
+                label="raw chat",
+            )
         except Exception as e:
             latency = (time.perf_counter() - start) * 1000
             self._final_answer = f"[LLM调用失败] {e}"

@@ -96,6 +96,12 @@ def list_profiles(config_loader: ConfigLoader) -> None:
     for name, profile in config_loader.load_llm_profiles().items():
         print(f"  {name}: {profile.model_name} @ {profile.endpoint_url}")
 
+    judges = config_loader.load_judge_profiles()
+    if judges:
+        print("\n=== 可用 Judge Profiles ===")
+        for name, profile in judges.items():
+            print(f"  {name}: {profile.model_name} @ {profile.endpoint_url} (threshold={profile.threshold})")
+
     print("\n=== 可用 Harness Profiles ===")
     for name, profile in config_loader.load_harness_profiles().items():
         print(f"  {name}: {profile.class_name} ({profile.description})")

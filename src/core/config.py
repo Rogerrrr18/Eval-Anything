@@ -1,9 +1,10 @@
 """
-配置管理 — 从 YAML 加载实验配置，Pydantic 校验。
+配置管理 — 从 YAML 加载实验配置。
 """
 from __future__ import annotations
 
 import os
+import sysconfig
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -65,6 +66,26 @@ class LLMProfile:
 
 
 @dataclass
+class JudgeProfile:
+    """一个 LLM-as-Judge 裁判配置。"""
+    name: str
+    class_name: str = "OpenAICompatibleLLM"
+    model_name: str = ""
+    endpoint_url: str = ""
+    api_key: str = "EMPTY"
+    temperature: float = 0.0
+    max_tokens: int = 800
+    top_p: float = 1.0
+    timeout_seconds: int = 60
+    enable_thinking: bool = False
+    rubric: str = ""
+    allowed_labels: List[str] = field(default_factory=list)
+    threshold: float = 0.6
+    system_prompt: Optional[str] = None
+    extra_params: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class HarnessProfile:
     """一个 Harness 架构的配置。"""
     name: str
@@ -93,10 +114,31 @@ class ConfigLoader:
     """从 YAML 文件加载所有配置。"""
 
     def __init__(self, config_dir: str = "configs"):
-        self.config_dir = Path(config_dir)
+        self.config_dir = self._resolve_config_dir(config_dir)
+        self.project_root = self.config_dir.parent
         self._llm_profiles: Optional[Dict[str, LLMProfile]] = None
+        self._judge_profiles: Optional[Dict[str, JudgeProfile]] = None
         self._harness_profiles: Optional[Dict[str, HarnessProfile]] = None
         self._env_profiles: Optional[Dict[str, EnvironmentProfile]] = None
+
+    def _resolve_config_dir(self, config_dir: str) -> Path:
+        """解析配置目录，兼容源码运行和 pip 安装后的 data-files。"""
+        raw_path = Path(config_dir).expanduser()
+        candidates = []
+        if raw_path.is_absolute():
+            candidates.append(raw_path)
+        else:
+            candidates.extend([
+                Path.cwd() / raw_path,
+                Path(__file__).resolve().parents[2] / raw_path,
+                Path(sysconfig.get_path("data")) / "eval-anything" / raw_path,
+            ])
+
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate.resolve()
+
+        return (Path.cwd() / raw_path).resolve()
 
     def load_experiment(self, experiment_file: str) -> ExperimentConfig:
         """加载实验配置。"""
@@ -149,6 +191,46 @@ class ConfigLoader:
         self._llm_profiles = profiles
         return profiles
 
+    def load_judge_profiles(self) -> Dict[str, JudgeProfile]:
+        """加载所有 LLM Judge profile。不存在配置文件时返回空字典。"""
+        if self._judge_profiles is not None:
+            return self._judge_profiles
+
+        path = self.config_dir / "judge_profiles.yaml"
+        if not path.exists():
+            self._judge_profiles = {}
+            return self._judge_profiles
+
+        with open(path, "r", encoding="utf-8") as f:
+            raw = yaml.safe_load(f) or {}
+
+        profiles = {}
+        for name, cfg in raw.get("judge_profiles", {}).items():
+            api_key = cfg.get("api_key", "EMPTY")
+            api_key_env = cfg.get("api_key_env")
+            if api_key_env and os.getenv(api_key_env):
+                api_key = os.getenv(api_key_env, api_key)
+
+            profiles[name] = JudgeProfile(
+                name=name,
+                class_name=cfg.get("class", "OpenAICompatibleLLM"),
+                model_name=cfg.get("model_name", name),
+                endpoint_url=cfg.get("endpoint_url", ""),
+                api_key=api_key,
+                temperature=cfg.get("temperature", 0.0),
+                max_tokens=cfg.get("max_tokens", 800),
+                top_p=cfg.get("top_p", 1.0),
+                timeout_seconds=cfg.get("timeout_seconds", 60),
+                enable_thinking=cfg.get("enable_thinking", False),
+                rubric=cfg.get("rubric", ""),
+                allowed_labels=cfg.get("allowed_labels", []),
+                threshold=cfg.get("threshold", 0.6),
+                system_prompt=cfg.get("system_prompt"),
+                extra_params=cfg.get("extra_params", {}),
+            )
+        self._judge_profiles = profiles
+        return profiles
+
     def load_harness_profiles(self) -> Dict[str, HarnessProfile]:
         """加载所有 Harness profile。"""
         if self._harness_profiles is not None:
@@ -198,6 +280,12 @@ class ConfigLoader:
         profiles = self.load_llm_profiles()
         if name not in profiles:
             raise KeyError(f"未找到 LLM profile: {name!r}。可用: {list(profiles.keys())}")
+        return profiles[name]
+
+    def get_judge_profile(self, name: str) -> JudgeProfile:
+        profiles = self.load_judge_profiles()
+        if name not in profiles:
+            raise KeyError(f"未找到 Judge profile: {name!r}。可用: {list(profiles.keys())}")
         return profiles[name]
 
     def get_harness_profile(self, name: str) -> HarnessProfile:

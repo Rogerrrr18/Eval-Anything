@@ -91,10 +91,13 @@ class FunctionCallHarness(BaseHarness):
     async def _call_llm(self, observation: str) -> Action:
         start = time.perf_counter()
         try:
-            response: LLMResponse = await self.llm.chat_with_tools(
-                messages=self._messages,
-                tools=self._tools,
-                tool_choice=self.config.extra_params.get("tool_choice", "auto"),
+            response: LLMResponse = await self._call_with_retries(
+                lambda: self.llm.chat_with_tools(
+                    messages=self._messages,
+                    tools=self._tools,
+                    tool_choice=self.config.extra_params.get("tool_choice", "auto"),
+                ),
+                label="function call chat",
             )
         except Exception as e:
             latency = (time.perf_counter() - start) * 1000
@@ -134,11 +137,15 @@ class FunctionCallHarness(BaseHarness):
                 action = Action(action_type="text_response", content=answer, tool_name=func_name)
             else:
                 # 其他工具调用
+                try:
+                    tool_args = json.loads(func_args) if isinstance(func_args, str) else func_args
+                except json.JSONDecodeError:
+                    tool_args = {"raw": func_args}
                 action = Action(
                     action_type="tool_call",
                     content=func_args,
                     tool_name=func_name,
-                    tool_args=json.loads(func_args) if isinstance(func_args, str) else {"raw": func_args},
+                    tool_args=tool_args,
                 )
         else:
             # 没有工具调用，直接作为文本响应

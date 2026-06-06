@@ -20,9 +20,18 @@ from src.harness.raw import RawHarness
 from src.harness.base import HarnessConfig
 from src.environment.base import TaskInstance, EnvConfig
 from src.environment.dialog import DialogEnvironment
+from src.core.config import ConfigLoader
+from src.core.orchestrator import Orchestrator
 from src.core.trajectory import Trajectory, ComboResult
 from src.metrics.quantitative import QuantitativeMetrics
 from src.metrics.qualitative import QualitativeAnalyzer
+from src.metrics.evaluators import (
+    CompositeEvaluator,
+    ExactMatchEvaluator,
+    F1MatchEvaluator,
+    FieldMatchEvaluator,
+    LLMJudgeEvaluator,
+)
 from src.reporting.excel_writer import ExcelWriter
 from src.reporting.html_dashboard import HTMLDashboard
 from src.reporting.trajectory_logger import TrajectoryLogger
@@ -221,6 +230,203 @@ def test_harness_layer():
     print("  ✅ Harness 层测试通过")
 
 
+def test_evaluators():
+    """测试通用 evaluator。"""
+    print("测试通用评测器...")
+
+    exact = ExactMatchEvaluator()
+    assert exact.evaluate(" Hello ", "hello").score == 1.0
+
+    f1 = F1MatchEvaluator()
+    f1_result = f1.evaluate("空调不制冷", "空调制冷")
+    assert 0.0 < f1_result.score < 1.0
+
+    field = FieldMatchEvaluator(field_keys=["product_name", "city"])
+    field_result = field.evaluate(
+        {"product_name": "空调", "city": "广州市"},
+        {"product_name": "空调", "city": "深圳市"},
+    )
+    assert field_result.score == 0.5
+    assert field_result.details["field_results"]["product_name"] is True
+    assert field_result.details["field_results"]["city"] is False
+
+    composite = CompositeEvaluator([(exact, 0.4), (field, 0.6)])
+    composite_result = composite.evaluate(
+        {"product_name": "空调", "city": "广州市"},
+        {"product_name": "空调", "city": "深圳市"},
+    )
+    assert 0.0 <= composite_result.score <= 1.0
+
+    async def _test_llm_judge():
+        judge_llm = MockLLM(LLMConfig(model_name="mock_judge", endpoint_url=""))
+        judge_llm.set_json_response({
+            "score": 0.82,
+            "passed": True,
+            "labels": ["correct"],
+            "comment": "答案基本满足要求。",
+            "evidence": ["字段 product_name 正确"],
+            "dimensions": {"correctness": 0.82},
+        })
+        judge = LLMJudgeEvaluator(
+            llm=judge_llm,
+            rubric="判断 prediction 是否满足 reference。",
+            allowed_labels=["correct", "missing_requirement"],
+        )
+        judge_result = await judge.evaluate_async(
+            prediction={"product_name": "空调"},
+            reference={"product_name": "空调"},
+            task="槽位抽取",
+        )
+        assert judge_result.score == 0.82
+        assert judge_result.passed is True
+        assert judge_result.labels == ["correct"]
+        assert judge_result.evidence == ["字段 product_name 正确"]
+
+    asyncio.run(_test_llm_judge())
+
+    print("  ✅ 通用评测器测试通过")
+
+
+def test_judge_profile_loading():
+    """测试 LLM Judge 配置加载。"""
+    print("测试 Judge 配置加载...")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        config_dir = Path(tmpdir) / "configs"
+        config_dir.mkdir()
+        (config_dir / "llm_profiles.yaml").write_text("llm_profiles: {}\n", encoding="utf-8")
+        (config_dir / "harness_profiles.yaml").write_text("harness_profiles: {}\n", encoding="utf-8")
+        (config_dir / "environments.yaml").write_text("environments: {}\n", encoding="utf-8")
+        (config_dir / "judge_profiles.yaml").write_text(
+            """
+judge_profiles:
+  mock_judge:
+    class: "MockLLM"
+    model_name: "mock"
+    endpoint_url: ""
+    threshold: 0.7
+    allowed_labels: [correct, missing_requirement]
+    rubric: "检查输出是否满足要求。"
+    extra_params:
+      responses:
+        - '{"score": 0.75, "passed": true, "labels": ["correct"], "comment": "ok", "evidence": ["matched"]}'
+""",
+            encoding="utf-8",
+        )
+
+        loader = ConfigLoader(str(config_dir))
+        profile = loader.get_judge_profile("mock_judge")
+        assert profile.threshold == 0.7
+        assert profile.allowed_labels == ["correct", "missing_requirement"]
+
+        judge = LLMJudgeEvaluator.from_profile(profile)
+        result = asyncio.run(judge.evaluate_async("answer", "answer"))
+        assert result.score == 0.75
+        assert result.labels == ["correct"]
+
+    print("  ✅ Judge 配置加载测试通过")
+
+
+def test_orchestrator_with_mock_config():
+    """测试配置驱动的 Orchestrator 完整链路。"""
+    print("测试 Orchestrator 配置链路...")
+
+    expected = {
+        "product_name": "空调",
+        "product_brand": "",
+        "fault_info_desc": "不制冷",
+        "product_num": "1",
+        "province": "广东省",
+        "city": "广州市",
+        "county": "天河区",
+        "subdistrict": "天河路",
+        "community": "太阳新天地",
+        "book_desc": "",
+        "phone_number": "13800138000",
+    }
+    slot_keys = list(expected.keys())
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        config_dir = root / "configs"
+        data_dir = root / "datasets"
+        (config_dir / "experiments").mkdir(parents=True)
+        data_dir.mkdir()
+
+        task = {
+            "task_id": "orchestrator_001",
+            "task_type": "slot_filling",
+            "prompt": "空调不制冷，广东省广州市天河区天河路太阳新天地，电话13800138000",
+            "ground_truth": expected,
+            "expected_slots": expected,
+            "slot_keys": slot_keys,
+        }
+        with open(data_dir / "tasks.jsonl", "w", encoding="utf-8") as f:
+            f.write(json.dumps(task, ensure_ascii=False) + "\n")
+
+        response = json.dumps(expected, ensure_ascii=False).replace('"', '\\"')
+        (config_dir / "llm_profiles.yaml").write_text(
+            f"""
+llm_profiles:
+  mock:
+    class: "MockLLM"
+    model_name: "mock"
+    endpoint_url: ""
+    extra_params:
+      responses:
+        - "{response}"
+""",
+            encoding="utf-8",
+        )
+        (config_dir / "harness_profiles.yaml").write_text(
+            """
+harness_profiles:
+  raw:
+    class: "RawHarness"
+    max_steps: 1
+    max_retries: 2
+""",
+            encoding="utf-8",
+        )
+        (config_dir / "environments.yaml").write_text(
+            """
+environments:
+  test_dialog:
+    class: "DialogEnvironment"
+    dataset: "datasets/tasks.jsonl"
+    max_steps: 1
+""",
+            encoding="utf-8",
+        )
+        (config_dir / "experiments" / "mock.yaml").write_text(
+            """
+experiment:
+  name: "mock_eval"
+  llm_profiles: [mock]
+  harness_profiles: [raw]
+  environments: [test_dialog]
+  execution:
+    max_concurrent_tasks: 2
+    max_concurrent_combos: 1
+    task_timeout_seconds: 30
+    step_timeout_seconds: 30
+    retry_on_api_error: 2
+    retry_backoff_base: 1
+""",
+            encoding="utf-8",
+        )
+
+        loader = ConfigLoader(str(config_dir))
+        exp_config = loader.load_experiment("mock.yaml")
+        result = asyncio.run(Orchestrator(loader).run_experiment(exp_config))
+
+    combo = result.combo_results[0]
+    assert combo.summary["success_rate"] == 1.0
+    assert combo.summary["format_compliance_rate"] == 1.0
+    assert combo.task_results[0].metadata["field_results"]["product_name"] is True
+    print("  ✅ Orchestrator 配置链路测试通过")
+
+
 def test_full_pipeline():
     """端到端测试：MockLLM → RawHarness → DialogEnvironment → 报告生成。"""
     print("测试完整管线...")
@@ -312,6 +518,7 @@ def test_full_pipeline():
             task_results=trajectories,
         )
         combo.compute_summary()
+        assert combo.summary["format_compliance_rate"] == 1.0
 
         from src.core.trajectory import ExperimentResult
         exp_result = ExperimentResult(
@@ -347,6 +554,9 @@ if __name__ == "__main__":
         test_llm_layer()
         test_environment_layer()
         test_harness_layer()
+        test_evaluators()
+        test_judge_profile_loading()
+        test_orchestrator_with_mock_config()
         test_full_pipeline()
         print("\n" + "=" * 50)
         print("✅ 所有测试通过！管线可以正常工作。")

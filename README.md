@@ -33,7 +33,10 @@
 ## 快速开始
 
 ```bash
-# 安装依赖
+# 从源码安装为可调用 CLI（推荐开发模式）
+pip install -e .
+
+# 或仅安装依赖后继续用 python -m src
 pip install -r requirements.txt
 
 # 生成示例数据
@@ -50,6 +53,21 @@ python -m src --experiment slot_filling
 
 # 指定单个组合
 python -m src --llm deepseek_v4_flash --harness raw --env slot_filling_xiu
+```
+
+安装后也可以像 CLI Agent 一样直接调用：
+
+```bash
+# 本地源码目录
+pip install -e .
+
+# 从 GitHub 安装
+pip install "git+https://github.com/Rogerrrr18/Eval-Anything.git"
+
+# 两个命令等价，eval-agent 是便于 Agent CLI 场景的别名
+eval-anything --list-profiles
+eval-agent --experiment slot_filling --dry-run
+eval-agent --llm deepseek_v4_flash --harness raw --env slot_filling_xiu
 ```
 
 ## 配置说明
@@ -174,3 +192,33 @@ experiment:
 - 成功模式统计
 - 接近成功案例（Near Misses）
 - LLM × Harness 对比洞察
+
+### LLM-as-Judge
+
+在 `configs/judge_profiles.yaml` 中配置裁判模型：
+
+```yaml
+judge_profiles:
+  default_judge:
+    class: "OpenAICompatibleLLM"
+    model_name: "your-judge-model"
+    endpoint_url: "https://your-endpoint/v1/chat/completions"
+    api_key_env: "JUDGE_API_KEY"
+    threshold: 0.6
+    rubric: |
+      请根据任务、参考答案和模型输出进行评审，只输出合法 JSON。
+```
+
+代码中使用：
+
+```python
+from src.core.config import ConfigLoader
+from src.metrics import LLMJudgeEvaluator
+
+loader = ConfigLoader("configs")
+profile = loader.get_judge_profile("default_judge")
+judge = LLMJudgeEvaluator.from_profile(profile)
+result = await judge.evaluate_async(prediction, reference, task=task_prompt)
+```
+
+Judge 需要返回 JSON：`score`、`passed`、`labels`、`comment`、`evidence`、`dimensions`。

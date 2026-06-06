@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "eval-anything-pipeline"
+version = "0.1.0"
+description = "Modular LLM x Harness x Environment evaluation pipeline."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+  { name = "Roger Yang", email = "yhr180414@163.com" }
+]
+dependencies = [
+  "httpx>=0.24.0",
+  "pyyaml>=6.0",
+  "openpyxl>=3.1.0",
+  "pandas>=2.0.0"
+]
+
+[project.scripts]
+eval-anything = "src.__main__:main"
+eval-agent = "src.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["src*"]
+
+[tool.setuptools.data-files]
+"eval-anything/configs" = [
+  "configs/environments.yaml",
+  "configs/harness_profiles.yaml",
+  "configs/judge_profiles.yaml",
+  "configs/llm_profiles.yaml"
+]
+"eval-anything/configs/experiments" = [
+  "configs/experiments/slot_filling.yaml"
+]
+"eval-anything/datasets/slot_filling" = [
+  "datasets/slot_filling/xiu_test.jsonl",
+  "datasets/slot_filling/zhuang_test.jsonl"
+]
