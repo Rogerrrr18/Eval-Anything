@@ -36,6 +36,7 @@ from src.reporting.html_dashboard import HTMLDashboard
 from src.reporting.trajectory_logger import TrajectoryLogger
 from src.reporting.case_study import CaseStudyWriter
 from src.utils.json_utils import setup_logging
+from src import config_paths
 
 
 def parse_args() -> argparse.Namespace:
@@ -44,17 +45,29 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
-  # 运行预设实验
-  python -m src --experiment slot_filling
+  # 一键安装后首次使用：跑配置向导
+  eval-anything --init
+
+  # 日常使用：直接进入对话模式（自动用用户配置的默认 driver）
+  eval-anything
+
+  # 临时切换驾驶 LLM
+  eval-anything --driver openai_gpt4o_mini
+
+  # 跑预设实验
+  eval-anything --experiment slot_filling
 
   # 指定组件组合
-  python -m src --llm deepseek_v4_flash --harness raw --env slot_filling_xiu
+  eval-anything --llm deepseek_v4_flash --harness raw --env slot_filling_xiu
 
   # 列出可用配置
-  python -m src --list-profiles
+  eval-anything --list-profiles
 
   # 生成示例数据
-  python -m src --generate-sample-data
+  eval-anything --generate-sample-data
+
+  # 配置目录定位
+  eval-anything --where                                  # 显示当前配置目录路径
         """,
     )
 
@@ -67,8 +80,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--config-dir", "-c",
         type=str,
-        default="configs",
-        help="配置文件根目录（默认: configs/）",
+        default=None,
+        help="配置文件根目录（默认按用户配置→cwd configs/→packaged 顺序自动定位）",
     )
 
     # 直接指定组件
@@ -86,6 +99,26 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-excel", action="store_true", help="跳过 Excel 报告")
     parser.add_argument("--no-html", action="store_true", help="跳过 HTML 仪表盘")
     parser.add_argument("--dry-run", action="store_true", help="只打印将要运行的组合，不实际执行")
+
+    # Chat 模式（默认行为：不带 flag 也进 chat）
+    parser.add_argument(
+        "--chat", action="store_true",
+        help="强制进入 CLI chat 模式（默认无参数时也会进 chat）",
+    )
+    parser.add_argument(
+        "--driver", type=str, default=None,
+        help="chat 模式下驾驶用的 LLM profile name；不指定时读用户 config.yaml 的 default_driver",
+    )
+
+    # 配置向导 / 路径
+    parser.add_argument(
+        "--init", action="store_true",
+        help="（重新）跑配置向导。首次使用会自动触发，无需手动加",
+    )
+    parser.add_argument(
+        "--where", action="store_true",
+        help="显示当前生效的配置目录路径与来源",
+    )
 
     return parser.parse_args()
 
@@ -312,11 +345,70 @@ async def run_pipeline(args: argparse.Namespace) -> None:
     print(f"\n✅ 所有报告已生成，保存在: {exp_config.output_dir}")
 
 
+def _resolve_config_dir(explicit: str | None) -> str:
+    """统一解析 --config-dir。"""
+    path, _source = config_paths.resolve_config_dir(explicit)
+    return str(path)
+
+
+def _is_default_chat_invocation(args) -> bool:
+    """判断是否是"不带任何 flag 的默认调用"——这种情况直接进 chat 模式。"""
+    return not any([
+        args.experiment, args.llm, args.harness, args.env,
+        args.list_profiles, args.generate_sample_data,
+        args.dry_run, args.init, args.where,
+    ])
+
+
 def main() -> None:
     args = parse_args()
 
+    # --where: 显示配置位置
+    if args.where:
+        path, source = config_paths.resolve_config_dir(args.config_dir)
+        print(f"当前配置目录: {path}")
+        print(f"来源: {source}")
+        print(f"用户配置目录 (默认目标): {config_paths.user_config_dir()}")
+        print(f"用户配置是否已初始化: {config_paths.has_user_config()}")
+        return
+
+    # --init: 强制跑向导
+    if args.init:
+        from src.setup_wizard import run_wizard
+        run_wizard(force=True)
+        return
+
+    # 进 chat 模式的情况：
+    #   - 显式 --chat
+    #   - 完全没带其他 flag（默认行为）
+    enter_chat = args.chat or _is_default_chat_invocation(args)
+
+    if enter_chat:
+        # 首次使用：自动跑向导
+        if not config_paths.has_user_config():
+            from src.setup_wizard import run_wizard
+            try:
+                run_wizard(force=False)
+            except (EOFError, KeyboardInterrupt):
+                print("\n配置向导被中断，退出。")
+                return
+            # 向导完成后继续进 chat
+
+        # 解析驾驶 LLM：优先 --driver，其次用户 config.yaml 的 default_driver
+        from src.setup_wizard import load_user_config
+        user_cfg = load_user_config()
+        driver = args.driver or user_cfg.get("default_driver")
+
+        config_dir = _resolve_config_dir(args.config_dir)
+        from src.cli_chat import run_chat
+        asyncio.run(run_chat(config_dir=config_dir, driver_name=driver))
+        return
+
+    # 非 chat 路径：保持原行为
+    config_dir = _resolve_config_dir(args.config_dir)
+
     if args.list_profiles:
-        config_loader = ConfigLoader(config_dir=args.config_dir)
+        config_loader = ConfigLoader(config_dir=config_dir)
         list_profiles(config_loader)
         return
 
@@ -324,6 +416,8 @@ def main() -> None:
         generate_sample_data()
         return
 
+    # 注入解析后的 config_dir 让 run_pipeline 用
+    args.config_dir = config_dir
     asyncio.run(run_pipeline(args))
 
 
