@@ -2,6 +2,36 @@
 
 模块化 Agent 评测管线，支持 **LLM × Harness × Environment** 三维组合评测。
 
+## 一键上手（推荐）
+
+```bash
+# 1. 装（pipx 隔离干净；也可以 pip install）
+pipx install "git+https://github.com/Rogerrrr18/Eval-Anything.git"
+
+# 2. 跑（首次自动启动配置向导，选 provider + 填 API key）
+eval-anything
+
+# 第一次会跳出向导：
+#   ⮕ 选 LLM provider (OpenAI / DeepSeek / Qwen / Kimi / GLM / 本地 / 自定义)
+#   ⮕ 填 API key (推荐用环境变量)
+#   ⮕ 选默认模型
+#   配置写到 ~/.config/eval-anything/，之后 `eval-anything` 直接进对话
+```
+
+之后日常使用：
+
+```bash
+eval-anything                              # 进对话模式（默认 driver）
+eval-anything --driver openai_gpt4o_mini   # 临时切换驾驶 LLM
+eval-anything --init                       # 重新跑配置向导
+eval-anything --where                      # 看当前配置在哪
+```
+
+在对话里直接说"帮我跑一个 slot filling 评测"、"对比这几个模型"、"加一个新模型 profile"
+之类，驾驶 LLM 会按 skill 内置的流程（5 步 4 闸门）带你走。
+
+
+
 ## 架构
 
 ```
@@ -30,41 +60,46 @@
 | **Harness** | Agent 架构 | `RawHarness` (基线)、`ReActHarness`、`FunctionCallHarness` |
 | **Environment** | 任务环境 | `DialogEnvironment` (槽位填充)、兼容 Excel/JSONL 数据 |
 
-## 快速开始
+## 高级用法 / 开发模式
 
 ```bash
-# 从源码安装为可调用 CLI（推荐开发模式）
+# 从源码开发
+git clone https://github.com/Rogerrrr18/Eval-Anything.git
+cd Eval-Anything
 pip install -e .
-
-# 或仅安装依赖后继续用 python -m src
-pip install -r requirements.txt
 
 # 生成示例数据
-python -m src --generate-sample-data
+eval-anything --generate-sample-data
 
 # 查看可用配置
-python -m src --list-profiles
+eval-anything --list-profiles
 
 # Dry run（不实际执行，查看将运行哪些组合）
-python -m src --experiment slot_filling --dry-run
+eval-anything --experiment slot_filling --dry-run
 
 # 运行评测
-python -m src --experiment slot_filling
+eval-anything --experiment slot_filling
 
 # 指定单个组合
-python -m src --llm deepseek_v4_flash --harness raw --env slot_filling_xiu
+eval-anything --llm deepseek_v4_flash --harness raw --env slot_filling_xiu
 ```
 
-安装后也可以像 CLI Agent 一样直接调用：
+## 配置目录在哪？
+
+按以下优先级解析（高 → 低）：
+
+1. `--config-dir` 显式传入
+2. `EVAL_ANYTHING_CONFIG_DIR` 环境变量
+3. **`~/.config/eval-anything/`**（pipx 安装后向导写入这里）
+4. 当前工作目录下的 `./configs/`（在 repo 里开发时）
+5. pip data-files 安装的默认 configs/
+6. repo 源码内 `configs/`（fallback）
+
+用 `eval-anything --where` 看当前生效的是哪个。
+
+安装后两个命令等价（`eval-agent` 是别名）：
 
 ```bash
-# 本地源码目录
-pip install -e .
-
-# 从 GitHub 安装
-pip install "git+https://github.com/Rogerrrr18/Eval-Anything.git"
-
-# 两个命令等价，eval-agent 是便于 Agent CLI 场景的别名
 eval-anything --list-profiles
 eval-agent --experiment slot_filling --dry-run
 eval-agent --llm deepseek_v4_flash --harness raw --env slot_filling_xiu
