@@ -1,13 +1,20 @@
 # LLM 端点配置
 # 每个profile定义一个LLM后端，通过 class 字段选择实现类
-# 支持所有 OpenAI API 兼容的推理服务（vLLM / SGLang / LMStudio / Ollama 等）
+# 支持所有 OpenAI API 兼容的推理服务（vLLM / SGLang / LMStudio / Ollama / OpenAI / DeepSeek / Qwen 等）
 #
-# ⚠️ 请勿提交包含真实内网地址的配置到公开仓库！
-# 实际使用时请复制此文件为 llm_profiles.local.yaml 并填入真实地址
+# 【API key 安全】
+#   不要把真实 api_key 明文写进本文件并提交！三种安全方式：
+#     1. api_key_env: SOMETHING_KEY   → 从环境变量 SOMETHING_KEY 读
+#     2. api_key: "${SOMETHING_KEY}"  → 同上的紧凑写法
+#     3. 复制本文件为 llm_profiles.local.yaml 后填明文（.local.yaml 加入 .gitignore）
 
 llm_profiles:
 
-  # ── DeepSeek V4 Flash（本地 vLLM） ──
+  # ════════════════════════════════════════════════
+  #   本地推理服务（vLLM / SGLang / Ollama / LMStudio）
+  # ════════════════════════════════════════════════
+
+  # ── DeepSeek V4 Flash（本地 vLLM 示例） ──
   deepseek_v4_flash:
     class: "OpenAICompatibleLLM"
     model_name: "DeepSeek-V4-Flash"
@@ -20,7 +27,6 @@ llm_profiles:
     enable_thinking: false
     extra_params: {}
 
-  # ── DeepSeek V4 Flash（备选端口） ──
   deepseek_v4_flash_b:
     class: "OpenAICompatibleLLM"
     model_name: "DeepSeek-V4-Flash"
@@ -31,13 +37,104 @@ llm_profiles:
     top_p: 1.0
     timeout_seconds: 30
 
-  # ── 示例：远程模型 ──
-  # 请替换为你的实际服务地址
-  # remote_model:
+  # ════════════════════════════════════════════════
+  #   公有云 API（OpenAI 兼容协议，按需取消注释 + 设环境变量）
+  # ════════════════════════════════════════════════
+
+  # ── OpenAI 官方 API ──
+  # 用前: export OPENAI_API_KEY=sk-...
+  # openai_gpt4o:
+  #   class: "OpenAICompatibleLLM"
+  #   model_name: "gpt-4o"
+  #   endpoint_url: "https://api.openai.com/v1/chat/completions"
+  #   api_key_env: "OPENAI_API_KEY"
+  #   temperature: 0.0
+  #   max_tokens: 2000
+  #   timeout_seconds: 60
+
+  # openai_gpt4o_mini:
+  #   class: "OpenAICompatibleLLM"
+  #   model_name: "gpt-4o-mini"
+  #   endpoint_url: "https://api.openai.com/v1/chat/completions"
+  #   api_key_env: "OPENAI_API_KEY"
+  #   temperature: 0.0
+  #   max_tokens: 2000
+  #   timeout_seconds: 60
+
+  # ── DeepSeek 公有云 API ──
+  # 用前: export DEEPSEEK_API_KEY=sk-...
+  # 注册: https://platform.deepseek.com/
+  # deepseek_chat:
+  #   class: "OpenAICompatibleLLM"
+  #   model_name: "deepseek-chat"
+  #   endpoint_url: "https://api.deepseek.com/v1/chat/completions"
+  #   api_key_env: "DEEPSEEK_API_KEY"
+  #   temperature: 0.0
+  #   max_tokens: 2000
+  #   timeout_seconds: 60
+
+  # deepseek_reasoner:
+  #   class: "OpenAICompatibleLLM"
+  #   model_name: "deepseek-reasoner"
+  #   endpoint_url: "https://api.deepseek.com/v1/chat/completions"
+  #   api_key_env: "DEEPSEEK_API_KEY"
+  #   temperature: 0.0
+  #   max_tokens: 4000
+  #   timeout_seconds: 120
+  #   enable_thinking: true
+
+  # ── 阿里云 DashScope (Qwen) ──
+  # 用前: export DASHSCOPE_API_KEY=sk-...
+  # 注册: https://dashscope.aliyun.com/
+  # qwen_max:
+  #   class: "OpenAICompatibleLLM"
+  #   model_name: "qwen-max"
+  #   endpoint_url: "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+  #   api_key_env: "DASHSCOPE_API_KEY"
+  #   temperature: 0.0
+  #   max_tokens: 2000
+  #   timeout_seconds: 60
+
+  # qwen3_72b_instruct:
+  #   class: "OpenAICompatibleLLM"
+  #   model_name: "qwen3-72b-instruct"
+  #   endpoint_url: "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+  #   api_key_env: "DASHSCOPE_API_KEY"
+  #   temperature: 0.0
+  #   max_tokens: 2000
+  #   timeout_seconds: 60
+
+  # ── Moonshot AI (Kimi) ──
+  # 用前: export MOONSHOT_API_KEY=sk-...
+  # 注册: https://platform.moonshot.cn/
+  # kimi_v1:
+  #   class: "OpenAICompatibleLLM"
+  #   model_name: "moonshot-v1-32k"
+  #   endpoint_url: "https://api.moonshot.cn/v1/chat/completions"
+  #   api_key_env: "MOONSHOT_API_KEY"
+  #   temperature: 0.0
+  #   max_tokens: 2000
+  #   timeout_seconds: 60
+
+  # ── 智谱 GLM (ChatGLM 4) ──
+  # 用前: export ZHIPU_API_KEY=...
+  # 注册: https://open.bigmodel.cn/
+  # glm4:
+  #   class: "OpenAICompatibleLLM"
+  #   model_name: "glm-4"
+  #   endpoint_url: "https://open.bigmodel.cn/api/paas/v4/chat/completions"
+  #   api_key_env: "ZHIPU_API_KEY"
+  #   temperature: 0.0
+  #   max_tokens: 2000
+  #   timeout_seconds: 60
+
+  # ── 其他自部署 OpenAI 兼容端点 ──
+  # 用前: export MY_API_KEY=...
+  # remote_model_example:
   #   class: "OpenAICompatibleLLM"
   #   model_name: "your-model-name"
-  #   endpoint_url: "http://your-host:port/v1/chat/completions"
-  #   api_key: "EMPTY"
+  #   endpoint_url: "https://your-host:port/v1/chat/completions"
+  #   api_key_env: "MY_API_KEY"
   #   temperature: 0.0
-  #   max_tokens: 600
+  #   max_tokens: 2000
   #   timeout_seconds: 30

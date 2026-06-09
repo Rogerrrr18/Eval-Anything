@@ -51,12 +51,20 @@ class ExperimentConfig:
 
 @dataclass
 class LLMProfile:
-    """一个 LLM 端点的配置。"""
+    """一个 LLM 端点的配置。
+
+    api_key 解析顺序:
+      1. yaml 里直接写明文 api_key
+      2. yaml 里写 api_key_env: SOME_VAR → 从环境变量 SOME_VAR 读
+      3. yaml 里写 api_key: "${SOME_VAR}" → 同样从环境变量读（更紧凑）
+      4. 都没有 → 默认 "EMPTY"（本地 vLLM 等不校验的端点适用）
+    """
     name: str
     class_name: str = "OpenAICompatibleLLM"
     model_name: str = ""
     endpoint_url: str = ""
     api_key: str = "EMPTY"
+    api_key_env: Optional[str] = None
     temperature: float = 0.0
     max_tokens: int = 600
     top_p: float = 1.0
@@ -175,12 +183,17 @@ class ConfigLoader:
 
         profiles = {}
         for name, cfg in raw.get("llm_profiles", {}).items():
+            api_key = self._resolve_api_key(
+                raw_key=cfg.get("api_key", "EMPTY"),
+                key_env=cfg.get("api_key_env"),
+            )
             profiles[name] = LLMProfile(
                 name=name,
                 class_name=cfg.get("class", "OpenAICompatibleLLM"),
                 model_name=cfg.get("model_name", name),
                 endpoint_url=cfg.get("endpoint_url", ""),
-                api_key=cfg.get("api_key", "EMPTY"),
+                api_key=api_key,
+                api_key_env=cfg.get("api_key_env"),
                 temperature=cfg.get("temperature", 0.0),
                 max_tokens=cfg.get("max_tokens", 600),
                 top_p=cfg.get("top_p", 1.0),
@@ -190,6 +203,31 @@ class ConfigLoader:
             )
         self._llm_profiles = profiles
         return profiles
+
+    @staticmethod
+    def _resolve_api_key(raw_key: str, key_env: Optional[str]) -> str:
+        """解析 api_key。
+
+        优先级:
+          1. api_key_env 显式指定的环境变量
+          2. raw_key 中的 ${VAR} 替换
+          3. raw_key 本身（明文，或 "EMPTY"）
+
+        如果 env 变量没设但被引用了，返回原 placeholder（让端点报 401 而不是悄悄用空字符串）。
+        """
+        if key_env:
+            val = os.getenv(key_env)
+            if val:
+                return val
+            # 落到 raw_key 兜底（可能也是 EMPTY）
+        if isinstance(raw_key, str) and raw_key.startswith("${") and raw_key.endswith("}"):
+            var = raw_key[2:-1]
+            val = os.getenv(var)
+            if val:
+                return val
+            # 显式提示用户：变量没设
+            return raw_key  # 保留 placeholder，端点请求会失败让用户看见
+        return raw_key
 
     def load_judge_profiles(self) -> Dict[str, JudgeProfile]:
         """加载所有 LLM Judge profile。不存在配置文件时返回空字典。"""
