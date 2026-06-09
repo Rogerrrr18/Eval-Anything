@@ -1,0 +1,57 @@
+{# experiments/<name>.yaml 模板
+   新建一个文件 configs/experiments/<exp_name>.yaml。不要覆盖现有文件，让用户自取新名字。
+
+   Required:
+     exp_name        - 文件名 stem，用作 experiment.name
+     description     - 一句话
+     output_dir      - "outputs/<exp_name>" 或带时间戳
+     llm_profiles    - list[str], 来自 llm_profiles.yaml 的 key
+     harness_profiles- list[str], 来自 harness_profiles.yaml 的 key
+     environments    - list[str], 来自 environments.yaml 的 key
+   Optional:
+     seed                  - 默认 42
+     max_concurrent_tasks  - 默认 4
+     max_concurrent_combos - 默认 1（本地 vLLM）或 4（远程 API）
+     task_timeout_seconds  - 默认 120
+     step_timeout_seconds  - 默认 60
+     case_study_count      - 默认 10
+#}
+# {{ description }}
+# 三轴笛卡尔积：{{ llm_profiles | length }} LLM × {{ harness_profiles | length }} Harness × {{ environments | length }} Env = {{ (llm_profiles | length) * (harness_profiles | length) * (environments | length) }} 组合
+
+experiment:
+  name: "{{ exp_name }}"
+  description: "{{ description }}"
+  seed: {{ seed | default(42) }}
+  output_dir: "{{ output_dir | default('outputs/' ~ exp_name) }}"
+
+  llm_profiles:
+{%- for p in llm_profiles %}
+    - {{ p }}
+{%- endfor %}
+
+  harness_profiles:
+{%- for p in harness_profiles %}
+    - {{ p }}
+{%- endfor %}
+
+  environments:
+{%- for p in environments %}
+    - {{ p }}
+{%- endfor %}
+
+  execution:
+    max_concurrent_tasks: {{ max_concurrent_tasks | default(4) }}
+    max_concurrent_combos: {{ max_concurrent_combos | default(1) }}
+    task_timeout_seconds: {{ task_timeout_seconds | default(120) }}
+    step_timeout_seconds: {{ step_timeout_seconds | default(60) }}
+    retry_on_api_error: 3
+    retry_backoff_base: 2
+
+  reporting:
+    generate_excel: true
+    generate_html_dashboard: true
+    generate_trajectory_jsonl: true
+    generate_case_studies: true
+    generate_charts: true
+    case_study_count: {{ case_study_count | default(10) }}

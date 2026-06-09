@@ -1,0 +1,39 @@
+{# environments.yaml 新条目模板
+   追加到 configs/environments.yaml 的 environments: 下，不要替换整文件。
+
+   Required placeholders:
+     env_name      - 见 references/configs.md 命名约定 (<task_type>_<scenario>)
+     class_name    - 通常 "DialogEnvironment"。新任务类型需先按 extending.md 加类
+     dataset_path  - 相对项目根的路径，如 "datasets/slot_filling/xiu_test.jsonl"
+     description   - 一句话说明
+     max_steps     - DialogEnvironment 用 1；其他 env 默认 20
+     task_type     - 与 dataset 里 task_type 字段对齐
+     slot_keys     - list[str], 评测字段
+   Optional placeholders:
+     intent_filter      - 仅 Excel 数据源用
+     system_prompt_file - 外部 system prompt 文件路径
+     extra_other        - dict, 其他 env 自定义参数
+#}
+  # ── {{ description }} ──
+  {{ env_name }}:
+    class: "{{ class_name | default('DialogEnvironment') }}"
+    dataset: "{{ dataset_path }}"
+    description: "{{ description }}"
+    max_steps: {{ max_steps | default(1) }}
+    extra_params:
+      task_type: "{{ task_type }}"
+{%- if intent_filter %}
+      intent_filter: "{{ intent_filter }}"
+{%- endif %}
+{%- if system_prompt_file %}
+      system_prompt_file: "{{ system_prompt_file }}"
+{%- endif %}
+      slot_keys:
+{%- for key in slot_keys %}
+        - {{ key }}
+{%- endfor %}
+{%- if extra_other %}
+{%- for k, v in extra_other.items() %}
+      {{ k }}: {{ v | tojson }}
+{%- endfor %}
+{%- endif %}

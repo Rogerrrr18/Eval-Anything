@@ -1,0 +1,25 @@
+{# Dataset single-task JSONL template
+   Used in workflows/mock-dataset.md (synth output schema) and design-experiment Step 2 分支 C (用户数据校验目标 schema).
+   Render one task per JSONL line. ensure_ascii=False so 中文不被转义.
+
+   Required placeholders:
+     task_id        - "<source>_<seq>"
+     task_type      - matches Step 1 result (slot_filling / tool_use / ...)
+     prompt         - 用户输入文本
+     ground_truth   - dict, 期望输出
+     expected_slots - dict, 仅 slot_filling 类必填，DialogEnvironment 用这个对比
+     slot_keys      - list[str], 评测的字段列表
+   Optional:
+     conversation_history - list[{"role", "content"}], 多轮
+     metadata             - dict, 任意元信息（source / row_idx / synth_batch）
+#}
+{
+  "task_id": "{{ task_id }}",
+  "task_type": "{{ task_type }}",
+  "prompt": "{{ prompt }}",
+  "ground_truth": {{ ground_truth | tojson(ensure_ascii=False) }},
+  "expected_slots": {{ expected_slots | tojson(ensure_ascii=False) }},
+  "slot_keys": {{ slot_keys | tojson(ensure_ascii=False) }}{% if conversation_history %},
+  "conversation_history": {{ conversation_history | tojson(ensure_ascii=False) }}{% endif %}{% if metadata %},
+  "metadata": {{ metadata | tojson(ensure_ascii=False) }}{% endif %}
+}
