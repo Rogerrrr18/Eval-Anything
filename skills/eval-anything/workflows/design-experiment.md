@@ -27,6 +27,8 @@
    - **code**: 代码生成 / 代码补全
    - **dialog_judge**: 多轮对话（裁判评分）
    - **classification**: 分类 / 选择题
+   - **rag_qa**: RAG / 文件问答 / 知识库助手
+   - **app_agent**: 完整应用 / 产品级 agent / 需要 workspace + 文件 + 隐藏 rubric 的任务
    - **custom**: 用户的任务不在上面（垂直业务场景）
 
 2. 根据任务类型推断**评测维度**（默认建议给用户看）：
@@ -36,6 +38,8 @@
    - code: 测试通过率、运行时错误率
    - dialog_judge: judge score、轮数
    - classification: 准确率、混淆矩阵
+   - rag_qa: 回答正确性、引用准确性、groundedness、检索/生成总延迟、judge score
+   - app_agent: task-local score、测试通过率、rubric 覆盖率、交付物完整性、人工复核通过率
 
 3. 推断 **harness 推荐集**（按 `SKILL.md` 的 harness 决策树）。
 
@@ -109,7 +113,7 @@ Agent 必须读 `references/harness-selection.md` 后按算法心算出：
 输入：
 - `task_type`（来自闸门 1）
 - `eval_dimensions`（来自闸门 1）
-- `env_class`（当前固定 `DialogEnvironment`）
+- `env_class`（按任务选择：槽位/分类用 `DialogEnvironment`；RAG 应用用 `RAGQAEnvironment` + Target；产品/agent benchmark 优先用 `WorkspaceEnvironment`）
 - `llm_profiles`（用户要测的 LLM，由你在 Step 1 之后跟用户确认范围）
 
 输出示例：
@@ -141,11 +145,12 @@ reasoning: |
 
 按 `templates/` 下的模板生成：
 
-1. **environment 条目**（追加到 `configs/environments.yaml`）—— 用 `templates/environment.yaml.j2`
+1. **environment 条目**（追加到 `configs/environments.yaml`）—— 槽位类可用 `templates/environment.yaml.j2`；RAG / workspace 类按 `references/configs.md` 手写对应 schema
 2. **experiment 文件**（新建 `configs/experiments/<name>.yaml`）—— 用 `templates/experiment.yaml.j2`，`harness_profiles` 字段来自 3.1
 3. **可能**：新 harness profile（追加到 `configs/harness_profiles.yaml`）—— 仅当 3.1 决定要新建
 4. **可能**：新 LLM profile（追加到 `configs/llm_profiles.yaml`）—— 用户要测试新模型才加
 5. **可能**：judge profile（追加到 `configs/judge_profiles.yaml`）—— dialog_judge 等任务才加
+6. **可能**：target profile（追加到 `configs/targets.yaml`）—— 完整应用/API 评测才加
 
 填字段时**严格对齐** `references/configs.md` 里的 schema。
 
@@ -237,6 +242,9 @@ options:
 | 正式跑时大批 timeout | 调高 `execution.task_timeout_seconds` 或调低并发 |
 | 正式跑时格式不合规率 > 50% | 大概率是 prompt 没说清楚 JSON 要求 → 改 environment 或 harness 的 system_prompt |
 | function_call harness 永远不触发 submit_answer | 所选 LLM 不支持 tools → 换 LLM 或换 harness |
+| app/RAG 项目被判断成"不是 LLM 不能评测" | 这是错误路由。应建 `TargetProfile` + `RAGQAEnvironment`，或用 `WorkspaceEnvironment` 自包含任务目录 |
+| judge panel 分歧很高 | 不要直接给最终结论；把 `panel_disagree` case 输出给用户做人工复核，并考虑改 rubric |
+| judge 校准 pearson/pass_accuracy 偏低 | 暂停把 judge 分当主指标，优先扩人工标注校准集或改 judge rubric |
 | 报告生成失败 | 检查 `<output_dir>/trajectories/*.jsonl` 是否非空，非空就重跑报告生成（用 `src.reporting` 的 writer 单独调） |
 
 ## 流程结束 ≠ 任务结束

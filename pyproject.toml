@@ -30,7 +30,8 @@ include = ["src", "src.*"]
   "configs/environments.yaml",
   "configs/harness_profiles.yaml",
   "configs/judge_profiles.yaml",
-  "configs/llm_profiles.yaml"
+  "configs/llm_profiles.yaml",
+  "configs/targets.yaml"
 ]
 "eval-anything/configs/experiments" = [
   "configs/experiments/slot_filling.yaml"
@@ -38,4 +39,17 @@ include = ["src", "src.*"]
 "eval-anything/datasets/slot_filling" = [
   "datasets/slot_filling/xiu_test.jsonl",
   "datasets/slot_filling/zhuang_test.jsonl"
+]
+"eval-anything/tasks/.templates/exact_match" = [
+  "tasks/.templates/exact_match/task.yaml",
+  "tasks/.templates/exact_match/query.md",
+  "tasks/.templates/exact_match/files/.gitkeep"
+]
+"eval-anything/tasks/.templates/code_exec" = [
+  "tasks/.templates/code_exec/task.yaml",
+  "tasks/.templates/code_exec/query.md",
+  "tasks/.templates/code_exec/files/.gitkeep"
+]
+"eval-anything/tasks/.templates/code_exec/.eval" = [
+  "tasks/.templates/code_exec/.eval/rubric.py"
 ]

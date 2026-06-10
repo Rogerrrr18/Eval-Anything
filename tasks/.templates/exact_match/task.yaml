@@ -1,0 +1,18 @@
+# AlphaEval-style task template: exact match
+
+name: "Your Exact Match Task"
+description: "Brief description of the task"
+category: research
+difficulty: easy
+
+tags:
+  - exact-match
+
+evaluation:
+  type: exact_match
+  expected_answer: "42"
+  ignore_whitespace: true
+
+agent:
+  timeout_seconds: 300
+  max_turns: 50

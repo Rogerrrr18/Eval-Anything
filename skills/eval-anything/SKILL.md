@@ -43,7 +43,8 @@ Step 5: 跑完读报告 + 总结洞察
 
 - **LLM 注册表**：`OpenAICompatibleLLM`、`HttpxLLM`（复用前者）、`MockLLM`。详见 `references/configs.md` 的 LLM 章节。
 - **Harness 注册表**：`RawHarness`（baseline，max_steps=1）、`ReActHarness`（regex 解析 Thought/Action 格式）、`FunctionCallHarness`（用 LLM 原生 tool_calls，默认带 `submit_answer`/`request_info`）。详见 `references/configs.md` 的 Harness 章节。
-- **Environment 注册表**：目前**只有** `DialogEnvironment`（JSON 槽位抽取，逐字段对比）。其他任务类型需要先按 `workflows/add-harness.md` 同类思路新建 env 类。详见 `references/configs.md` 的 Environment 章节。
+- **Target 注册表**：`HTTPAppTarget`、`MockTarget`。完整应用/API（如 RAG 助手）应优先作为 Target，而不是误当成 LLM profile。详见 `references/configs.md` 的 Target 章节。
+- **Environment 注册表**：`DialogEnvironment` / `SlotFillingEnvironment`（JSON 槽位抽取）、`RAGQAEnvironment`（RAG/文件问答应用端到端评测）、`WorkspaceEnvironment` / `AlphaTaskEnvironment`（AlphaEval-style 自包含 task 目录）。详见 `references/configs.md` 的 Environment 章节。
 - **数据集来源映射**（任务类型 → 开源候选）：见 `references/datasets.md`。
 - **CLI 参数全集**：见 `references/cli.md`。
 - **报告产物结构**：见 `references/reports.md`。
@@ -92,9 +93,11 @@ Step 5: 跑完读报告 + 总结洞察
 1. 读 `outputs/<exp>/reports/` 下的 HTML 仪表盘和 case_studies 的 markdown
 2. 给用户写一段**洞察小结**：
    - 哪个 (LLM, Harness, Env) 组合赢了，赢多少
+   - 如有 pairwise/Elo 或 judge 校准，说明相对排名和 judge 可信度
    - 主要失败模式是什么
    - 下一步建议（换模型？调 prompt？换 harness？扩数据？）
 3. 提示用户 `outputs/<exp>/trajectories/` 下有完整逐步轨迹，可用于深入 debug
+4. 对带 `panel_disagree`、低校准相关性、近似成功（near miss）的样本，主动建议进入人工复核队列。
 
 ## 文件索引
 

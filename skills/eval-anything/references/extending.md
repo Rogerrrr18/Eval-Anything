@@ -89,7 +89,15 @@
 
 ## 3. 新增 Environment 类（高频）
 
-当前 codebase **只有 `DialogEnvironment`**。任何不是"输出 JSON 槽位"形态的任务都需要新 env。
+当前 codebase 已内置：
+
+| Env | 用途 |
+|---|---|
+| `DialogEnvironment` / `SlotFillingEnvironment` | JSON 槽位抽取、结构化字段对比 |
+| `RAGQAEnvironment` | 通过 Target 调完整 RAG/文件问答应用，再做回答/引用评分 |
+| `WorkspaceEnvironment` / `AlphaTaskEnvironment` | AlphaEval-style 自包含任务目录：`task.yaml + query.md + files/ + .eval/` |
+
+任何不是上述形态的任务再新增 env。不要把完整应用硬塞进 LLM profile；应先判断是否可以用 `Target` 或 `WorkspaceEnvironment` 表达。
 
 ### 常见 env 类型
 
@@ -100,6 +108,8 @@
 | 代码生成 | `CodeEnvironment` | 函数体 / 完整文件 | 跑 sandbox + 测试用例 |
 | 工具调用 | `ToolEnvironment` | 一系列 `tool_call` Action | 调用图匹配 + 最终答案 |
 | 自由文本（裁判打分） | `JudgeEnvironment` | 任意文本 | 调 `judge_profile` 打分 |
+| RAG / 文件问答应用 | `RAGQAEnvironment` | 目标应用返回自由文本 + citations | 规则指标 + judge / panel |
+| 产品级 agent benchmark | `WorkspaceEnvironment` | `results/ans.md` + 交付物 | task-local `rubric.py` |
 
 ### 步骤
 
@@ -150,6 +160,7 @@
 - [ ] 小数据集（3-5 条）跑通，trajectory JSONL 非空、字段对齐
 - [ ] 报告 HTML 能正常打开，新组合出现在矩阵里
 - [ ] 在 `tests/` 下加一个单元测试（参考 `tests/test_e2e.py`）
+- [ ] 如果用 LLM judge，至少准备一个小型人工校准集，检查 `pass_accuracy` / `score_pearson_r`
 
 ## 5. 提交 PR 时
 

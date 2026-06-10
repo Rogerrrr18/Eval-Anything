@@ -53,6 +53,7 @@ harness_profiles:
 | `RawHarness` | `src/harness/raw.py` | 单次 LLM 调用，基线 | 无 |
 | `ReActHarness` | `src/harness/react.py` | Thought/Action 循环，regex 解析 | `system_prompt`（覆盖默认提示） |
 | `FunctionCallHarness` | `src/harness/function_call.py` | LLM 原生 tool calling | `tool_choice`（默认 `auto`）、`tools`（覆盖默认工具集） |
+| `DirectHarness` | `src/harness/direct.py` | 不调用 LLM，直通给 target-backed environment | 无 |
 
 **默认推荐 max_steps**：
 
@@ -61,6 +62,7 @@ harness_profiles:
 | raw | **1**（改了无意义） |
 | react | 5–10 |
 | function_call | 5–15 |
+| direct | **1**（用于 RAGQAEnvironment / HTTP app 评测） |
 
 **ReAct 输出格式约定**（写在 system_prompt 里）：
 ```
@@ -99,13 +101,20 @@ environments:
 | class 名 | 文件 | 适用任务 | 输出契约 |
 |---|---|---|---|
 | `DialogEnvironment` | `src/environment/dialog.py` | 多轮对话 + 槽位抽取 / JSON 信息提取 | agent 必须输出可解析的 JSON 字符串 |
+| `SlotFillingEnvironment` | `src/environment/dialog.py` | `DialogEnvironment` 的语义别名 | agent 必须输出可解析的 JSON 字符串 |
+| `RAGQAEnvironment` | `src/environment/rag_qa.py` | RAG / 文件问答应用端到端评测 | environment 调用 target 的 `chat` operation，返回自由文本答案 |
+| `WorkspaceEnvironment` | `src/environment/workspace.py` | AlphaEval-style 自包含 task 目录 | task.yaml/query.md/files/.eval 组成任务世界 |
+| `AlphaTaskEnvironment` | `src/environment/workspace.py` | `WorkspaceEnvironment` 的语义别名 | 同上 |
 
-**当前 codebase 只有 1 个 env 类**。需要新任务类型（代码生成、推理、工具调用 with 真实工具等）时必须先新增 env 类，见 `references/extending.md`。
+`Environment` 是任务世界，不只是 prompt 模板。LLM-only 任务通常由
+Harness 调 LLM 后把答案交给 env 判分；应用级任务（例如 OpenFiles 这种 RAG
+项目）由 env 直接调用 `Target`，再统一把答案、指标和 metadata 交给报告层。
 
 **数据集文件支持的格式**（`Orchestrator._load_tasks`）：
 - `.jsonl` — 每行一个 `TaskInstance` 的 JSON 字典，**推荐**
 - `.json` — 顶层是 list 或 `{"tasks": [...]}` 包裹的 list
 - `.xlsx` / `.xls` — 兼容历史 evalv3 格式，按 `conversation_id` 分组、按 `dialogue_count` 排序
+- 目录 — AlphaEval-style task suite；目录本身含 `task.yaml` 时加载单个 task，否则加载其下所有含 `task.yaml` 的子目录
 
 **JSONL 单行 schema**（`TaskInstance` 字段）：
 ```json
@@ -132,6 +141,110 @@ environments:
 - `fault_info_desc`：空对空、非空对非空都算对（语义模糊，不做精确匹配）
 - `product_name`：`"空气能"` 归一化为 `"中央空调"`
 - 其他字段做严格 `str.strip()` 后相等比较
+
+**RAG QA JSONL 单行 schema**：
+```json
+{
+  "task_id": "rag_001",
+  "task_type": "rag_qa",
+  "question": "Q4 营收同比增长多少？",
+  "files": ["q4_strategy.pdf"],
+  "reference_answer": "同比增长 23%",
+  "expected_citations": ["q4_strategy.pdf"],
+  "rubric": "回答必须基于文件内容，给出关键数字并引用来源。"
+}
+```
+
+`RAGQAEnvironment` 内置轻量规则指标：
+- `answer_correctness`：reference 与 answer 互为包含时记 1，否则 0
+- `citation_accuracy`：期望 citation 在返回 citation 或答案文本中命中的比例
+- `target_success`：target HTTP/API 调用是否成功
+
+需要语义评测时，在 env profile 上加 `judge` 或 `judge_panel`，让 LLM-as-Judge
+补充 `judge_score`。
+
+## 3.1 `configs/targets.yaml`
+
+```yaml
+targets:
+  <target_name>:
+    class: "HTTPAppTarget"
+    base_url: "http://localhost:8000"
+    description: "被测应用/API"
+    timeout_seconds: 60
+    endpoints:
+      chat: "/api/v1/chat"
+    headers: {}
+    api_key_env: "OPTIONAL_API_KEY"
+    extra_params:
+      methods:
+        chat: "POST"
+```
+
+**Target 注册表**（`src/target/__init__.py` 的 `_TARGET_REGISTRY`）：
+
+| class 名 | 文件 | 适用对象 |
+|---|---|---|
+| `HTTPAppTarget` | `src/target/http_app.py` | 通过 HTTP API 评测完整应用，如 RAG 服务 |
+| `MockTarget` | `src/target/mock.py` | 离线测试 / demo，不发网络请求 |
+
+Environment 通过 `target: <target_name>` 引用 target profile。
+
+## 3.2 AlphaEval-style task directory
+
+`WorkspaceEnvironment` 把“环境”理解成一个可复现 workspace，而不是一个全局
+profile。目录结构：
+
+```text
+tasks/<suite>/<task_id>/
+├── task.yaml
+├── query.md
+├── files/
+└── .eval/
+    └── rubric.py
+```
+
+`task.yaml` 示例：
+
+```yaml
+name: "Exact task"
+category: research
+difficulty: easy
+evaluation:
+  type: exact_match
+  expected_answer: "42"
+```
+
+`code_exec` 示例：
+
+```yaml
+evaluation:
+  type: code_exec
+  rubric_script: .eval/rubric.py
+  pass_threshold: 0.6
+  timeout_seconds: 120
+```
+
+运行时：
+- `query.md` 作为 agent/LLM 输入
+- `files/` 被复制到 workspace 的 `deliverables/`
+- 模型输出被写到 `workspace/results/ans.md`
+- `.eval/` 只在评测阶段复制到 `workspace/rubric/`
+- `rubric.py --submission <workspace>` 输出 `score=0.75` 或 JSON `{"score": 0.75}` 即可
+
+对应 env profile：
+
+```yaml
+environments:
+  workspace_tasks:
+    class: "WorkspaceEnvironment"
+    dataset: "tasks/my_suite"
+    max_steps: 1
+    extra_params:
+      workspace_root: "outputs/workspaces"
+      clean_workspace: true
+      rubric_timeout_seconds: 120
+```
 
 ## 4. `configs/experiments/<name>.yaml`
 

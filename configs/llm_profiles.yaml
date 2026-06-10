@@ -10,6 +10,17 @@
 
 llm_profiles:
 
+  # ── Target-backed 环境占位 LLM ──
+  # RAGQAEnvironment + DirectHarness 会直接调用 Target，不需要真实 LLM。
+  mock_passthrough:
+    class: "MockLLM"
+    model_name: "mock-passthrough"
+    endpoint_url: ""
+    api_key: "EMPTY"
+    temperature: 0.0
+    max_tokens: 1
+    timeout_seconds: 1
+
   # ════════════════════════════════════════════════
   #   本地推理服务（vLLM / SGLang / Ollama / LMStudio）
   # ════════════════════════════════════════════════

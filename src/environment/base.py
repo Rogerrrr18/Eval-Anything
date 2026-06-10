@@ -17,6 +17,8 @@ class EnvConfig:
     dataset: str = ""
     description: str = ""
     max_steps: int = 20
+    target: Optional[str] = None
+    target_config: Dict[str, Any] = field(default_factory=dict)
     extra_params: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -92,6 +94,10 @@ class BaseEnvironment(ABC):
             "steps_taken": self.step_count,
             "env_name": self.config.name,
         }
+
+    async def close(self) -> None:
+        """清理环境资源。需要持有外部连接的环境可覆写。"""
+        return None
 
     def _mark_done(self, terminated: bool = False, truncated: bool = False) -> None:
         """标记任务结束。"""

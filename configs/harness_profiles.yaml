@@ -41,6 +41,16 @@ harness_profiles:
     extra_params:
       tool_choice: "auto"
 
+  # ── Direct：不调用 LLM，直接把环境输入传给 target-backed environment ──
+  # 用于评测完整应用/API，例如 RAG 问答服务。当前 Orchestrator 仍保留 LLM 轴，
+  # 因此通常搭配 llm_profiles.yaml 里的 mock_passthrough 占位。
+  direct:
+    class: "DirectHarness"
+    max_steps: 1
+    max_retries: 1
+    timeout_per_step: 60
+    description: "直通 Harness：让 Environment 直接调用被测 Target"
+
   # ── 自定义 Harness 模板 ──
   # my_harness:
   #   class: "MyCustomHarness"             # 需要在 src/harness/ 下实现

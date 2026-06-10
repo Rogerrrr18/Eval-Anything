@@ -97,7 +97,14 @@ def list_profiles(config_loader: ConfigLoader) -> None:
 
     print("\n=== 可用 Environments ===")
     for name, profile in config_loader.load_env_profiles().items():
-        print(f"  {name}: {profile.class_name} — {profile.description} [{profile.dataset}]")
+        target = f" target={profile.target}" if profile.target else ""
+        print(f"  {name}: {profile.class_name} — {profile.description} [{profile.dataset}]{target}")
+
+    targets = config_loader.load_target_profiles()
+    if targets:
+        print("\n=== 可用 Target Profiles ===")
+        for name, profile in targets.items():
+            print(f"  {name}: {profile.class_name} @ {profile.base_url} ({profile.description})")
 
 
 def generate_sample_data(output_dir: str = "datasets/slot_filling") -> None:

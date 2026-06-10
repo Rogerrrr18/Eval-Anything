@@ -47,6 +47,36 @@ environments:
         - book_desc
         - phone_number
 
+  # ── RAG 问答应用评测模板 ──
+  # Environment 不再要求模型输出 JSON，而是通过 target 调用完整应用/API。
+  # openfiles_rag_qa:
+  #   class: "RAGQAEnvironment"
+  #   dataset: "tasks/openfiles_rag_qa/dataset.jsonl"
+  #   description: "OpenFiles RAG 问答端到端评测"
+  #   target: "openfiles_local"
+  #   max_steps: 1
+  #   # 可选：接入 judge 或 judge_panel 做语义评分
+  #   # judge_panel: budget_panel
+  #   extra_params:
+  #     metrics: [answer_correctness, citation_accuracy, target_success]
+  #     answer_fields: [answer, response, content, message, text]
+  #     citation_fields: [citations, sources, source_documents, references]
+  #     # 如果 OpenFiles 的请求体不是默认字段，可在这里映射：
+  #     # request_template:
+  #     #   message: "$question"
+  #     #   files: "$files"
+
+  # ── AlphaEval-style 自包含任务目录模板 ──
+  # workspace_tasks:
+  #   class: "WorkspaceEnvironment"
+  #   dataset: "tasks/my_suite"        # 目录下每个子目录含 task.yaml + query.md + files/ + .eval/
+  #   description: "自包含 task workspace 评测"
+  #   max_steps: 1
+  #   extra_params:
+  #     workspace_root: "outputs/workspaces"
+  #     clean_workspace: true
+  #     rubric_timeout_seconds: 120
+
   # ── Excel 数据源示例（兼容 evalv3 格式） ──
   # 使用现有的 xlsx 测试集，无需手动转格式
   # 请替换为你的实际 xlsx 文件路径

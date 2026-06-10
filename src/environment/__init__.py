@@ -7,9 +7,15 @@ from typing import Dict, Optional, Type
 
 from .base import BaseEnvironment, EnvConfig
 from .dialog import DialogEnvironment
+from .rag_qa import RAGQAEnvironment
+from .workspace import WorkspaceEnvironment
 
 _ENV_REGISTRY: Dict[str, Type[BaseEnvironment]] = {
     "DialogEnvironment": DialogEnvironment,
+    "SlotFillingEnvironment": DialogEnvironment,
+    "RAGQAEnvironment": RAGQAEnvironment,
+    "WorkspaceEnvironment": WorkspaceEnvironment,
+    "AlphaTaskEnvironment": WorkspaceEnvironment,
 }
 
 

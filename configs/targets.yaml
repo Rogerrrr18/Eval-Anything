@@ -1,0 +1,20 @@
+# Target 配置
+# Target 是被测系统本身：可以是完整 HTTP 应用、CLI、浏览器应用等。
+# Environment 通过 target: <name> 引用这里的 profile。
+
+targets:
+
+  # ── OpenFiles / 通用 RAG 应用示例 ──
+  # 按实际项目 API 改 base_url 和 endpoints.chat。
+  openfiles_local:
+    class: "HTTPAppTarget"
+    base_url: "${OPENFILES_BASE_URL:-http://localhost:8000}"
+    description: "本地 OpenFiles / RAG 应用 HTTP API"
+    timeout_seconds: 60
+    endpoints:
+      chat: "/api/v1/chat"
+    headers: {}
+    api_key: "EMPTY"
+    extra_params:
+      methods:
+        chat: "POST"

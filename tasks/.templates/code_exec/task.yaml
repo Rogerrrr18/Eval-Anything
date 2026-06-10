@@ -1,0 +1,20 @@
+# AlphaEval-style task template: code execution evaluator
+
+name: "Your Code-Verified Task"
+description: "Use a task-local rubric.py to evaluate the answer"
+category: research
+difficulty: medium
+
+tags:
+  - code-exec
+  - self-contained-task
+
+evaluation:
+  type: code_exec
+  rubric_script: .eval/rubric.py
+  pass_threshold: 0.6
+  timeout_seconds: 120
+
+agent:
+  timeout_seconds: 600
+  max_turns: 100

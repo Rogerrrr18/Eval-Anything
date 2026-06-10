@@ -111,12 +111,12 @@ shows its reasoning in Gate 3.
 ### 5. Architecture
 
 ```
-┌─────────────┐   ┌─────────────┐   ┌─────────────┐
-│  LLM layer  │   │Harness layer│   │   Env layer │
-│  (backend)  │   │(agent arch) │   │   (task)    │
-└──────┬──────┘   └──────┬──────┘   └──────┬──────┘
-       └──────────┬──────┴──────────┬──────┘
-                  ▼                 ▼
+┌─────────────┐   ┌─────────────┐   ┌─────────────┐   ┌─────────────┐
+│  LLM layer  │   │ Target layer│   │Harness layer│   │   Env layer │
+│  (backend)  │   │ (app/API)   │   │(agent arch) │   │   (task)    │
+└──────┬──────┘   └──────┬──────┘   └──────┬──────┘   └──────┬──────┘
+       └─────────────────┴──────────┬──────┴─────────────────┘
+                                    ▼
            ┌────────────┐    ┌──────────────┐
            │Orchestrator│    │Metrics engine│
            └──────┬─────┘    └──────┬───────┘
@@ -130,8 +130,28 @@ shows its reasoning in Gate 3.
 | Layer | Description | Built-in |
 |----|------|--------|
 | **LLM** | Model backend | `OpenAICompatibleLLM` (any OpenAI-compatible API: vLLM / SGLang / Ollama / DeepSeek / Qwen / Kimi / GLM …), `MockLLM` |
-| **Harness** | Agent architecture | `RawHarness` (baseline), `ReActHarness`, `FunctionCallHarness` |
-| **Environment** | Task environment | `DialogEnvironment` (slot filling / JSONL datasets), extensible |
+| **Target** | System under evaluation | `HTTPAppTarget` (apps/APIs such as RAG systems), `MockTarget` |
+| **Harness** | Agent architecture | `RawHarness` (baseline), `ReActHarness`, `FunctionCallHarness`, `DirectHarness` |
+| **Environment** | Task environment | `DialogEnvironment` (slot filling), `RAGQAEnvironment` (app-level RAG QA), `WorkspaceEnvironment` (AlphaEval-style task directories), extensible |
+
+`Environment` is the task world, not just a prompt template. For LLM-only
+benchmarks it can talk to a harness/LLM; for app-level benchmarks it can call a
+`Target` directly. This is how you evaluate projects such as a RAG assistant
+without pretending the whole app is an LLM.
+
+For agent/product benchmarks, prefer **self-contained task directories**:
+
+```
+tasks/my_suite/my_task/
+├─ task.yaml
+├─ query.md
+├─ files/
+└─ .eval/
+   └─ rubric.py
+```
+
+This mirrors AlphaEval's environment model: the task directory itself carries
+the prompt, visible files, hidden evaluation assets, and scoring logic.
 
 ### 6. Config reference
 
@@ -153,6 +173,26 @@ llm_profiles:
 ```
 
 > **Never** write real API keys into YAML. Use `api_key_env` or `${VAR}`.
+
+For app-level evaluation, define the application in `configs/targets.yaml` and
+reference it from an environment:
+
+```yaml
+# configs/targets.yaml
+targets:
+  openfiles_local:
+    class: "HTTPAppTarget"
+    base_url: "${OPENFILES_BASE_URL:-http://localhost:8000}"
+    endpoints:
+      chat: "/api/v1/chat"
+
+# configs/environments.yaml
+environments:
+  openfiles_rag_qa:
+    class: "RAGQAEnvironment"
+    dataset: "tasks/openfiles_rag_qa/dataset.jsonl"
+    target: "openfiles_local"
+```
 
 ### 7. LLM-as-Judge
 
@@ -348,12 +388,12 @@ Step 3 不会问 "你要 raw 还是 react"——agent 按 `references/harness-se
 ### 5. 架构
 
 ```
-┌─────────────┐   ┌─────────────┐   ┌─────────────┐
-│  LLM 层     │   │ Harness 层  │   │Environment层 │
-│ (可替换后端) │   │ (可替换架构) │   │ (可替换环境) │
-└──────┬──────┘   └──────┬──────┘   └──────┬──────┘
-       └──────────┬──────┴──────────┬──────┘
-                  ▼                 ▼
+┌─────────────┐   ┌─────────────┐   ┌─────────────┐   ┌─────────────┐
+│  LLM 层     │   │ Target 层   │   │ Harness 层  │   │Environment层 │
+│ (模型后端)   │   │ (应用/API)  │   │ (可替换架构) │   │ (任务世界)   │
+└──────┬──────┘   └──────┬──────┘   └──────┬──────┘   └──────┬──────┘
+       └─────────────────┴──────────┬──────┴─────────────────┘
+                                    ▼
            ┌────────────┐    ┌──────────────┐
            │Orchestrator│    │ Metrics 引擎 │
            └──────┬─────┘    └──────┬───────┘
@@ -367,8 +407,27 @@ Step 3 不会问 "你要 raw 还是 react"——agent 按 `references/harness-se
 | 层 | 说明 | 已实现 |
 |----|------|--------|
 | **LLM** | 大模型后端 | `OpenAICompatibleLLM`（任何 OpenAI 兼容 API：vLLM / SGLang / Ollama / DeepSeek / Qwen / Kimi / GLM …）、`MockLLM` |
-| **Harness** | Agent 架构 | `RawHarness` (baseline)、`ReActHarness`、`FunctionCallHarness` |
-| **Environment** | 任务环境 | `DialogEnvironment`（槽位填充 / JSONL 数据集），可扩展 |
+| **Target** | 被测系统 | `HTTPAppTarget`（RAG 应用/API 等完整系统）、`MockTarget` |
+| **Harness** | Agent 架构 | `RawHarness` (baseline)、`ReActHarness`、`FunctionCallHarness`、`DirectHarness` |
+| **Environment** | 任务世界 | `DialogEnvironment`（槽位填充）、`RAGQAEnvironment`（应用级 RAG QA）、`WorkspaceEnvironment`（AlphaEval-style 自包含任务目录），可扩展 |
+
+`Environment` 不是单纯 prompt 模板，而是任务世界。LLM benchmark 可以走
+Harness + LLM；应用级 benchmark 可以由 Environment 直接调用 `Target`。这样
+OpenFiles 这类 RAG 助手可以被当作完整应用评测，而不是被误认为一个裸 LLM。
+
+对 agent / 产品级 benchmark，推荐使用**自包含 task 目录**：
+
+```
+tasks/my_suite/my_task/
+├─ task.yaml
+├─ query.md
+├─ files/
+└─ .eval/
+   └─ rubric.py
+```
+
+这和 AlphaEval 的环境理解一致：一个 task 目录本身携带 prompt、可见文件、
+隐藏评测资产和评分逻辑。
 
 ### 6. 配置说明
 
@@ -388,6 +447,26 @@ llm_profiles:
 ```
 
 > **绝不要**把真实 key 写进 yaml。用 `api_key_env` 或 `${VAR}` 占位。
+
+评测完整应用时，在 `configs/targets.yaml` 里声明被测系统，并在 environment
+里引用：
+
+```yaml
+# configs/targets.yaml
+targets:
+  openfiles_local:
+    class: "HTTPAppTarget"
+    base_url: "${OPENFILES_BASE_URL:-http://localhost:8000}"
+    endpoints:
+      chat: "/api/v1/chat"
+
+# configs/environments.yaml
+environments:
+  openfiles_rag_qa:
+    class: "RAGQAEnvironment"
+    dataset: "tasks/openfiles_rag_qa/dataset.jsonl"
+    target: "openfiles_local"
+```
 
 ### 7. LLM-as-Judge
 
