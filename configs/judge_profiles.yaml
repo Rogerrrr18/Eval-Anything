@@ -1,6 +1,9 @@
 # LLM-as-Judge 配置
 # 建议使用独立裁判模型，不要用被评测模型评自己。
 # api_key 可直接填写，也可用 api_key_env 从环境变量读取。
+#
+# 多裁判（panel）模式：见 judge_panels.yaml，引用本文件里的 judge 名字。
+# 三家族占位（openai_judge / claude_judge / qwen_judge）足够 default_panel 直接跑。
 
 judge_profiles:
 
@@ -34,3 +37,61 @@ judge_profiles:
       - 0.2: 大部分错误，仅有少量相关内容
       - 0.0: 完全错误、无法解析或与任务无关
       必须输出合法 JSON，字段包括 score、passed、labels、comment、evidence、dimensions。
+
+  # ── PoLL 默认 panel 的三个跨家族成员（OpenAI / Anthropic / Qwen）──
+  # 配置都填到这里复用 rubric & allowed_labels，只换端点和 model_name。
+
+  openai_judge:
+    class: "OpenAICompatibleLLM"
+    model_name: "gpt-4o"
+    endpoint_url: "https://api.openai.com/v1/chat/completions"
+    api_key_env: "OPENAI_API_KEY"
+    temperature: 0.0
+    max_tokens: 800
+    timeout_seconds: 60
+    threshold: 0.6
+    allowed_labels: &default_labels
+      - correct
+      - format_error
+      - missing_requirement
+      - hallucination
+      - incomplete_answer
+      - weak_reasoning
+      - poor_code_quality
+      - weak_test_coverage
+      - security_risk
+      - documentation_gap
+    rubric: &default_rubric |
+      请根据任务、参考答案和模型输出进行评审。
+      评分范围为 0 到 1：
+      - 1.0: 完全满足要求，输出正确且证据充分
+      - 0.8: 基本正确，仅有轻微遗漏或表达问题
+      - 0.5: 部分正确，但存在重要缺失
+      - 0.2: 大部分错误，仅有少量相关内容
+      - 0.0: 完全错误、无法解析或与任务无关
+      必须输出合法 JSON，字段包括 score、passed、labels、comment、evidence、dimensions。
+      不要奖励冗长，不要奖励仅排版好看的输出。
+
+  claude_judge:
+    class: "OpenAICompatibleLLM"
+    model_name: "claude-sonnet-4"
+    endpoint_url: "https://api.anthropic.com/v1/chat/completions"
+    api_key_env: "ANTHROPIC_API_KEY"
+    temperature: 0.0
+    max_tokens: 800
+    timeout_seconds: 60
+    threshold: 0.6
+    allowed_labels: *default_labels
+    rubric: *default_rubric
+
+  qwen_judge:
+    class: "OpenAICompatibleLLM"
+    model_name: "qwen-max"
+    endpoint_url: "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+    api_key_env: "DASHSCOPE_API_KEY"
+    temperature: 0.0
+    max_tokens: 800
+    timeout_seconds: 60
+    threshold: 0.6
+    allowed_labels: *default_labels
+    rubric: *default_rubric

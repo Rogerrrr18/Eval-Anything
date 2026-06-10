@@ -32,6 +32,11 @@ from .config import (
 )
 from ..environment.base import EnvConfig
 from ..harness.base import HarnessConfig
+from ..metrics.evaluators import (
+    EvaluationResult,
+    LLMJudgeEvaluator,
+    PanelLLMJudgeEvaluator,
+)
 from .trajectory import Trajectory, ComboResult, ExperimentResult
 
 # ── Harness 注册表 ──
@@ -87,6 +92,25 @@ def _create_env_from_profile(profile: EnvironmentProfile) -> BaseEnvironment:
         extra_params=profile.extra_params,
     )
     return create_environment(config, class_name=profile.class_name)
+
+
+def _build_judge_for_env(
+    env_profile: EnvironmentProfile,
+    config_loader: ConfigLoader,
+):
+    """根据 env_profile 的 judge_panel / judge 字段构造一个 LLM 裁判。
+
+    判定优先级：judge_panel > judge > None。没配就返回 None，跳过 LLM 裁判评分。
+    返回的对象同时支持 `evaluate_async` 和 `close`，调用方按一个接口走。
+    """
+    if env_profile.judge_panel:
+        panel_profile = config_loader.get_judge_panel(env_profile.judge_panel)
+        judge_profiles = config_loader.load_judge_profiles()
+        return PanelLLMJudgeEvaluator.from_panel_profile(panel_profile, judge_profiles)
+    if env_profile.judge:
+        judge_profile = config_loader.get_judge_profile(env_profile.judge)
+        return LLMJudgeEvaluator.from_profile(judge_profile)
+    return None
 
 
 class Orchestrator:
@@ -173,6 +197,13 @@ class Orchestrator:
 
         llm = _create_llm_from_profile(llm_profile)
 
+        # 可选：LLM 裁判（单裁判或 panel）。env_profile 配了才构造。
+        judge = _build_judge_for_env(env_profile, self.config_loader)
+        if judge is not None:
+            judge_kind = "panel" if isinstance(judge, PanelLLMJudgeEvaluator) else "single"
+            judge_name = getattr(judge, "panel_name", None) or env_profile.judge or "judge"
+            print(f"  LLM 裁判: {judge_kind} ({judge_name})")
+
         # 加载测试集
         tasks = self._load_tasks(env_profile)
         print(f"  加载 {len(tasks)} 条测试用例")
@@ -188,6 +219,7 @@ class Orchestrator:
                 return await self._run_single_task(
                     harness, env, task, exp_config, task_idx, len(tasks),
                     llm_name, harness_name, env_name,
+                    judge=judge,
                 )
 
         try:
@@ -197,6 +229,11 @@ class Orchestrator:
             ])
         finally:
             await llm.close()
+            if judge is not None:
+                try:
+                    await judge.close()
+                except Exception as exc:  # 关闭失败不影响主流程
+                    self.logger.warning(f"关闭 judge 失败: {exc}")
 
         # 汇总
         combo = ComboResult(
@@ -219,6 +256,7 @@ class Orchestrator:
         llm_name: str,
         harness_name: str,
         env_name: str,
+        judge: Optional[Any] = None,
     ) -> Trajectory:
         """运行单个任务。"""
         harness.reset()
@@ -341,6 +379,32 @@ class Orchestrator:
             for key, passed in field_results.items():
                 scores[f"field_{key}"] = 1.0 if passed else 0.0
 
+        # 可选：LLM 裁判评分。失败不阻塞主流程，记到 metadata。
+        judge_metadata: Dict[str, Any] = {}
+        if judge is not None:
+            try:
+                judge_result: EvaluationResult = await judge.evaluate_async(
+                    prediction=final_answer,
+                    reference=task.ground_truth,
+                    task=task.task_id,
+                    metadata={
+                        "llm_name": llm_name,
+                        "harness_name": harness_name,
+                        "env_name": env_name,
+                    },
+                )
+                scores["judge_score"] = judge_result.score
+                scores["judge_passed"] = 1.0 if judge_result.passed else 0.0
+                judge_metadata = {
+                    "labels": judge_result.labels,
+                    "evidence": judge_result.evidence,
+                    "comment": judge_result.comment,
+                    "details": judge_result.details,
+                }
+            except Exception as exc:
+                self.logger.warning(f"judge 评分失败 task={task.task_id}: {exc}")
+                judge_metadata = {"error": str(exc)}
+
         print(f"  [{task_idx+1}/{total_tasks}] {task.task_id}: {status} ({reward:.1%})")
 
         return Trajectory(
@@ -357,7 +421,11 @@ class Orchestrator:
             total_output_tokens=harness._total_output_tokens,
             total_latency_ms=harness.get_total_latency(),
             status=status,
-            metadata={"field_results": field_results, "format_ok": format_ok},
+            metadata={
+                "field_results": field_results,
+                "format_ok": format_ok,
+                **({"judge": judge_metadata} if judge_metadata else {}),
+            },
         )
 
     async def _with_retries(

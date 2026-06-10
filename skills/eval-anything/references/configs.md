@@ -197,7 +197,39 @@ judge_profiles:
       评分范围 0-1，必须输出合法 JSON，字段含 score、passed、labels、comment、evidence、dimensions。
 ```
 
-**强烈建议 judge 用独立模型**，不要让被评测模型给自己打分。在代码里用法见 README §LLM-as-Judge，目前 judge 不是主流程自动调用——是用户在自己代码里显式调 `LLMJudgeEvaluator`。
+**强烈建议 judge 用独立模型**，不要让被评测模型给自己打分。
+
+**接入方式（重要）**：judge 现在是 orchestrator 自动调用的——在 `environments.yaml` 给某个 env 设 `judge: <judge_name>` 或 `judge_panel: <panel_name>` 即可，主流程跑完每条任务后会调裁判，结果进 `scores["judge_score"]` + `metadata["judge"]`。库级 API（`LLMJudgeEvaluator.from_profile` / `PanelLLMJudgeEvaluator.from_panel_profile`）仍可独立用。
+
+## 5.1 `configs/judge_panels.yaml`（可选，PoLL 多裁判）
+
+PoLL（Panel of LLM Judges）：N 个跨模型家族的裁判并发打分 + 聚合（trimmed_mean + 多数票），抵消单裁判 self-preference 和 cognitive lock-in 偏差。**前提是成员必须跨家族**——3 个 GPT-4 变体投票毫无意义。
+
+```yaml
+judge_panels:
+  <panel_name>:
+    description: "..."
+    members:                          # 引用 judge_profiles.yaml 中的 judge 名字
+      - openai_judge                  # OpenAI 家族
+      - claude_judge                  # Anthropic 家族
+      - qwen_judge                    # Qwen 家族
+    aggregation: trimmed_mean         # mean | median | trimmed_mean | majority
+    disagreement_threshold: 0.3       # max-min > 阈值 → 自动加 panel_disagree 标签
+    require_diverse_families: true    # 同家族 ≥ 2 个时 warning，不阻塞
+    min_label_support: ceil_half      # ceil_half | majority | all
+```
+
+聚合规则：
+- `score` = 成员分数的 `trimmed_mean`（N≥3 时去掉最高、最低）
+- `passed` = 多数票，平票取 `false`
+- `labels` = union，按 `min_label_support` 过滤（默认 ⌈N/2⌉）
+- `evidence` / `comment` = union / 带成员前缀拼接
+- `dimensions` = 按维度独立 trimmed_mean
+- 自动添加 `panel_disagree` label——case study 里值得优先 review
+
+报告字段：`details["members"]` 保留每个成员的原始判定（score / labels / comment / raw_judge_output / tokens / latency），方便下钻。
+
+**Agent 在 design-experiment 闸门 3 写入配置时**：如果用户用了 `dialog_judge` 任务类型或评测维度里出现"主观"、"质量"、"风格"等关键词，默认把环境的 `judge_panel` 字段设为 `default_panel`，并在 reasoning 段说明"已挂 3 家族 panel 抵消单裁判偏差"。
 
 ## 字段命名约定
 

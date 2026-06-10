@@ -94,6 +94,22 @@ class JudgeProfile:
 
 
 @dataclass
+class JudgePanelProfile:
+    """LLM-as-Judge 评审团配置（多个跨家族裁判联合打分）。
+
+    members 引用现有 judge_profiles.yaml 里的 JudgeProfile 名字。
+    跨家族（如 OpenAI + Anthropic + Qwen）才能真正抵消单家族的系统性偏差。
+    """
+    name: str
+    members: List[str] = field(default_factory=list)
+    aggregation: str = "trimmed_mean"   # mean | median | trimmed_mean | majority
+    disagreement_threshold: float = 0.3  # max(scores) - min(scores) > 阈值 → 标 panel_disagree
+    require_diverse_families: bool = True  # True 时同家族 ≥ 2 个仅 warning（不阻塞）
+    min_label_support: str = "ceil_half"    # ceil_half | majority | all
+    description: str = ""
+
+
+@dataclass
 class HarnessProfile:
     """一个 Harness 架构的配置。"""
     name: str
@@ -113,6 +129,8 @@ class EnvironmentProfile:
     dataset: str = ""
     description: str = ""
     max_steps: int = 20
+    judge: Optional[str] = None        # 引用单个 JudgeProfile
+    judge_panel: Optional[str] = None  # 引用 JudgePanelProfile，与 judge 二选一，panel 优先
     extra_params: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -126,6 +144,7 @@ class ConfigLoader:
         self.project_root = self.config_dir.parent
         self._llm_profiles: Optional[Dict[str, LLMProfile]] = None
         self._judge_profiles: Optional[Dict[str, JudgeProfile]] = None
+        self._judge_panels: Optional[Dict[str, JudgePanelProfile]] = None
         self._harness_profiles: Optional[Dict[str, HarnessProfile]] = None
         self._env_profiles: Optional[Dict[str, EnvironmentProfile]] = None
 
@@ -269,6 +288,39 @@ class ConfigLoader:
         self._judge_profiles = profiles
         return profiles
 
+    def load_judge_panels(self) -> Dict[str, JudgePanelProfile]:
+        """加载所有 Judge Panel profile。不存在配置文件时返回空字典。"""
+        if self._judge_panels is not None:
+            return self._judge_panels
+
+        path = self.config_dir / "judge_panels.yaml"
+        if not path.exists():
+            self._judge_panels = {}
+            return self._judge_panels
+
+        with open(path, "r", encoding="utf-8") as f:
+            raw = yaml.safe_load(f) or {}
+
+        panels = {}
+        for name, cfg in raw.get("judge_panels", {}).items():
+            panels[name] = JudgePanelProfile(
+                name=name,
+                members=list(cfg.get("members", [])),
+                aggregation=cfg.get("aggregation", "trimmed_mean"),
+                disagreement_threshold=float(cfg.get("disagreement_threshold", 0.3)),
+                require_diverse_families=bool(cfg.get("require_diverse_families", True)),
+                min_label_support=cfg.get("min_label_support", "ceil_half"),
+                description=cfg.get("description", ""),
+            )
+        self._judge_panels = panels
+        return panels
+
+    def get_judge_panel(self, name: str) -> JudgePanelProfile:
+        panels = self.load_judge_panels()
+        if name not in panels:
+            raise KeyError(f"未找到 Judge Panel: {name!r}。可用: {list(panels.keys())}")
+        return panels[name]
+
     def load_harness_profiles(self) -> Dict[str, HarnessProfile]:
         """加载所有 Harness profile。"""
         if self._harness_profiles is not None:
@@ -309,6 +361,8 @@ class ConfigLoader:
                 dataset=cfg.get("dataset", ""),
                 description=cfg.get("description", ""),
                 max_steps=cfg.get("max_steps", 20),
+                judge=cfg.get("judge"),
+                judge_panel=cfg.get("judge_panel"),
                 extra_params=cfg.get("extra_params", {}),
             )
         self._env_profiles = profiles

@@ -12,13 +12,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Protocol, Sequence, Tuple
 
 from ..llm import create_llm
 from ..llm.base import BaseLLM, LLMConfig
 from ..utils.json_utils import robust_json_parse
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -338,6 +342,286 @@ class LLMJudgeEvaluator:
         else:
             items = []
         return [str(item).strip() for item in items if str(item).strip()]
+
+
+# ── PoLL: Panel of LLM Judges ─────────────────────────────────────────────
+#
+# 单裁判一次打分的两大问题：
+#   1) 自我偏好（self-preference）：裁判偏爱"长得像自己输出"的回答
+#   2) 锁定错路（cognitive lock-in）：裁判一旦看错某个事实就整路错下去
+# Panel 用 N 个跨家族裁判并发独立打分，再聚合（trimmed_mean + 多数票）抵消。
+# 关键前提是成员**跨家族**——3 个 GPT-4 变体投票没有意义。
+#
+# 参考：Cohere 2024, "Replacing Judges with Juries" (arXiv:2404.18796)
+# ---------------------------------------------------------------------------
+
+# 模型名前缀 → 家族（用于多样性检测；按可靠的命名约定做启发式）
+_FAMILY_PATTERNS: List[Tuple[str, re.Pattern[str]]] = [
+    ("openai",     re.compile(r"^(gpt|o[134]|chatgpt|text-davinci|text-embedding|whisper)", re.I)),
+    ("anthropic",  re.compile(r"^claude", re.I)),
+    ("google",     re.compile(r"^(gemini|palm|bard)", re.I)),
+    ("meta",       re.compile(r"^(llama|codellama)", re.I)),
+    ("mistral",    re.compile(r"^(mistral|mixtral|codestral)", re.I)),
+    ("deepseek",   re.compile(r"^deepseek", re.I)),
+    ("qwen",       re.compile(r"^qwen", re.I)),
+    ("zhipu",      re.compile(r"^(glm|chatglm)", re.I)),
+    ("moonshot",   re.compile(r"^(kimi|moonshot)", re.I)),
+    ("baichuan",   re.compile(r"^baichuan", re.I)),
+    ("yi",         re.compile(r"^yi[- ]?", re.I)),
+    ("xai",        re.compile(r"^grok", re.I)),
+    ("cohere",     re.compile(r"^(command|cohere)", re.I)),
+]
+
+
+def detect_family(model_name: str) -> str:
+    """从模型名启发式识别家族。识别不出时返回 'unknown'。"""
+    if not model_name:
+        return "unknown"
+    for family, pattern in _FAMILY_PATTERNS:
+        if pattern.search(model_name):
+            return family
+    return "unknown"
+
+
+def _trimmed_mean(values: List[float]) -> float:
+    """N≥3 时去掉最高、最低各一个再平均；N<3 取算术平均。"""
+    if not values:
+        return 0.0
+    if len(values) < 3:
+        return sum(values) / len(values)
+    trimmed = sorted(values)[1:-1]
+    return sum(trimmed) / len(trimmed)
+
+
+def _median(values: List[float]) -> float:
+    if not values:
+        return 0.0
+    s = sorted(values)
+    mid = len(s) // 2
+    return s[mid] if len(s) % 2 else (s[mid - 1] + s[mid]) / 2
+
+
+def _aggregate_score(values: List[float], method: str) -> float:
+    if method == "mean":
+        return sum(values) / len(values) if values else 0.0
+    if method == "median":
+        return _median(values)
+    if method == "majority":
+        # 用 0.5 阈值二分后多数票，再回拟合到 0/1（少见用法）
+        return 1.0 if sum(1 for v in values if v >= 0.5) > len(values) / 2 else 0.0
+    # 默认 trimmed_mean
+    return _trimmed_mean(values)
+
+
+def _min_support_count(n_members: int, mode: str) -> int:
+    if mode == "all":
+        return n_members
+    if mode == "majority":
+        return n_members // 2 + 1
+    # ceil_half 默认
+    return (n_members + 1) // 2
+
+
+class PanelLLMJudgeEvaluator:
+    """N 个裁判并发独立打分 + 聚合。
+
+    设计目标：抵消单裁判的 self-preference 和 cognitive lock-in。
+    前提：成员必须跨模型家族（构造时校验，default warn 不 raise）。
+    """
+
+    name = "panel_judge"
+
+    def __init__(
+        self,
+        members: Sequence["LLMJudgeEvaluator"],
+        member_names: Optional[Sequence[str]] = None,
+        member_families: Optional[Sequence[str]] = None,
+        aggregation: str = "trimmed_mean",
+        disagreement_threshold: float = 0.3,
+        require_diverse_families: bool = True,
+        min_label_support: str = "ceil_half",
+        panel_name: str = "panel",
+    ):
+        if not members:
+            raise ValueError("PanelLLMJudgeEvaluator requires at least one member")
+        self.members = list(members)
+        self.member_names = list(member_names) if member_names else [f"judge_{i}" for i in range(len(members))]
+        self.member_families = list(member_families) if member_families else [
+            detect_family(m.llm.config.model_name) for m in self.members
+        ]
+        self.aggregation = aggregation
+        self.disagreement_threshold = disagreement_threshold
+        self.require_diverse_families = require_diverse_families
+        self.min_label_support_mode = min_label_support
+        self.panel_name = panel_name
+
+        self._check_family_diversity()
+
+    def _check_family_diversity(self) -> None:
+        family_counts = Counter(self.member_families)
+        repeated = {fam: cnt for fam, cnt in family_counts.items() if cnt >= 2 and fam != "unknown"}
+        if not repeated:
+            return
+        msg = (
+            f"PanelLLMJudgeEvaluator '{self.panel_name}': 同家族成员重复 "
+            f"{repeated} (members={list(zip(self.member_names, self.member_families))})。"
+            " 同家族裁判共享 self-preference，panel 抵消偏差的效果会显著下降。"
+        )
+        if self.require_diverse_families:
+            logger.warning(msg)
+        else:
+            logger.info(msg)
+
+    @classmethod
+    def from_panel_profile(
+        cls,
+        panel_profile: Any,
+        judge_profiles: Dict[str, Any],
+    ) -> "PanelLLMJudgeEvaluator":
+        """从 JudgePanelProfile + judge_profiles 注册表构造。"""
+        members: List[LLMJudgeEvaluator] = []
+        member_names: List[str] = []
+        member_families: List[str] = []
+        for member_name in panel_profile.members:
+            if member_name not in judge_profiles:
+                raise KeyError(
+                    f"Panel {panel_profile.name!r} 引用了未知 judge_profile: {member_name!r}。"
+                    f" 可用: {list(judge_profiles.keys())}"
+                )
+            judge_profile = judge_profiles[member_name]
+            members.append(LLMJudgeEvaluator.from_profile(judge_profile))
+            member_names.append(member_name)
+            member_families.append(detect_family(judge_profile.model_name))
+        return cls(
+            members=members,
+            member_names=member_names,
+            member_families=member_families,
+            aggregation=panel_profile.aggregation,
+            disagreement_threshold=panel_profile.disagreement_threshold,
+            require_diverse_families=panel_profile.require_diverse_families,
+            min_label_support=panel_profile.min_label_support,
+            panel_name=panel_profile.name,
+        )
+
+    async def evaluate_async(
+        self,
+        prediction: Any,
+        reference: Any = None,
+        *,
+        task: Any = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> EvaluationResult:
+        # 并发跑所有成员，asyncio.gather 让总延迟 ≈ max(per-judge)
+        member_results: List[EvaluationResult] = await asyncio.gather(*[
+            m.evaluate_async(prediction, reference, task=task, metadata=metadata)
+            for m in self.members
+        ])
+        return self._aggregate(member_results)
+
+    def evaluate(self, prediction: Any, reference: Any = None) -> EvaluationResult:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(self.evaluate_async(prediction, reference))
+        raise RuntimeError(
+            "PanelLLMJudgeEvaluator.evaluate() cannot run inside an active event loop; use evaluate_async()."
+        )
+
+    async def close(self) -> None:
+        await asyncio.gather(*[m.close() for m in self.members])
+
+    # ── 聚合 ────────────────────────────────────────────────────────────
+    def _aggregate(self, results: List[EvaluationResult]) -> EvaluationResult:
+        n = len(results)
+        scores = [r.score for r in results]
+        agg_score = _aggregate_score(scores, self.aggregation)
+
+        # 多数票决定 passed；平票时取保守值 False
+        pass_votes = sum(1 for r in results if r.passed)
+        passed = pass_votes > n / 2
+
+        # label support 过滤：只保留至少 K 个成员同意的 label
+        min_support = _min_support_count(n, self.min_label_support_mode)
+        label_counter = Counter(label for r in results for label in r.labels)
+        consensus_labels = sorted([
+            label for label, cnt in label_counter.items() if cnt >= min_support
+        ])
+
+        # 分歧度自动标记
+        score_range = max(scores) - min(scores) if scores else 0.0
+        disagree = score_range > self.disagreement_threshold
+        if disagree and "panel_disagree" not in consensus_labels:
+            consensus_labels.append("panel_disagree")
+
+        # evidence: union 去重保留顺序
+        seen: set = set()
+        merged_evidence: List[str] = []
+        for r in results:
+            for ev in r.evidence:
+                key = ev.strip().lower()
+                if key and key not in seen:
+                    seen.add(key)
+                    merged_evidence.append(ev.strip())
+
+        # comment 拼接，带成员前缀，方便报告里追溯
+        comment_chunks = []
+        for name, r in zip(self.member_names, results):
+            if r.comment:
+                comment_chunks.append(f"[{name}] {r.comment}")
+        merged_comment = "\n".join(comment_chunks)
+
+        # dimensions 按维度独立 trimmed_mean
+        dim_collector: Dict[str, List[float]] = {}
+        for r in results:
+            for dim_name, dim_score in (r.details.get("dimensions") or {}).items():
+                try:
+                    dim_collector.setdefault(dim_name, []).append(float(dim_score))
+                except (TypeError, ValueError):
+                    continue
+        merged_dimensions = {
+            dim: _aggregate_score(vals, self.aggregation)
+            for dim, vals in dim_collector.items()
+        }
+
+        # member_details 完整保留，让 case study 能下钻
+        member_details = []
+        for name, family, r in zip(self.member_names, self.member_families, results):
+            member_details.append({
+                "name": name,
+                "family": family,
+                "score": r.score,
+                "passed": r.passed,
+                "labels": r.labels,
+                "evidence": r.evidence,
+                "comment": r.comment,
+                "raw_judge_output": r.details.get("raw_judge_output"),
+                "input_tokens": r.details.get("input_tokens"),
+                "output_tokens": r.details.get("output_tokens"),
+                "latency_ms": r.details.get("latency_ms"),
+            })
+
+        # 一致性诊断指标
+        agreement_stats = {
+            "score_range": score_range,
+            "pass_vote_ratio": pass_votes / n,
+            "panel_disagree": disagree,
+            "n_members": n,
+        }
+
+        return EvaluationResult(
+            score=agg_score,
+            passed=passed,
+            labels=consensus_labels,
+            evidence=merged_evidence,
+            comment=merged_comment,
+            details={
+                "panel_name": self.panel_name,
+                "aggregation": self.aggregation,
+                "dimensions": merged_dimensions,
+                "agreement": agreement_stats,
+                "members": member_details,
+            },
+        )
 
 
 class CompositeEvaluator:

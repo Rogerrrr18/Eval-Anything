@@ -1,0 +1,48 @@
+# Panel of LLM Judges (PoLL) 配置
+#
+# 用 N 个跨模型家族的裁判并发独立打分，再聚合（trimmed_mean + 多数票），
+# 抵消单裁判的 self-preference bias 和 cognitive lock-in。
+# 关键前提：成员必须跨家族。3 个 GPT-4 变体投票 ≠ panel，只是浪费 token。
+#
+# members 字段引用 judge_profiles.yaml 中的 judge 名字。
+#
+# 聚合参数：
+#   aggregation              : trimmed_mean(默认) | mean | median | majority
+#                              trimmed_mean 在 N≥3 时去掉最高、最低各一个再平均
+#   disagreement_threshold   : max(scores)-min(scores) > 阈值 → 自动加 panel_disagree 标签
+#                              这些 case 是 rubric 歧义/边界 case/裁判失误的金矿，应人工 review
+#   require_diverse_families : true 时若发现同家族 ≥ 2 个 → warning（不阻塞启动）
+#   min_label_support        : ceil_half(默认) | majority | all
+#                              一个 label 至少要这么多成员同意才进 consensus_labels
+
+judge_panels:
+
+  default_panel:
+    description: "三家族默认 panel：OpenAI + Anthropic + Qwen"
+    members:
+      - openai_judge       # OpenAI 家族
+      - claude_judge       # Anthropic 家族
+      - qwen_judge         # Qwen 家族
+    aggregation: trimmed_mean
+    disagreement_threshold: 0.3
+    require_diverse_families: true
+    min_label_support: ceil_half
+
+  # 全本地化 panel（不出网，便于 CI / 私域评测）。
+  # 需要先在 llm_profiles.yaml 配本地端点，再在 judge_profiles.yaml 加对应 judge。
+  # local_panel:
+  #   description: "本地 vLLM 三家族 panel"
+  #   members:
+  #     - deepseek_local_judge
+  #     - qwen_local_judge
+  #     - glm_local_judge
+  #   aggregation: trimmed_mean
+  #   disagreement_threshold: 0.3
+
+  # 严格 panel：要求所有成员一致才通过；分歧严格暴露给人工。
+  # strict_panel:
+  #   description: "全员一致才通过的高标准 panel"
+  #   members: [openai_judge, claude_judge, qwen_judge]
+  #   aggregation: median
+  #   disagreement_threshold: 0.2
+  #   min_label_support: all

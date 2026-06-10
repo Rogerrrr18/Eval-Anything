@@ -156,6 +156,10 @@ llm_profiles:
 
 ### 7. LLM-as-Judge
 
+Two modes — both wired into the orchestrator. Set `judge` or `judge_panel` on an environment in `configs/environments.yaml` and the orchestrator runs the judge after each task.
+
+**Single judge** (cheaper, biased toward one model's preferences):
+
 ```yaml
 # configs/judge_profiles.yaml
 judge_profiles:
@@ -169,17 +173,64 @@ judge_profiles:
       Evaluate the model output against the reference. Return JSON only.
 ```
 
-```python
-from src.core.config import ConfigLoader
-from src.metrics import LLMJudgeEvaluator
+**Judge panel (PoLL — Panel of LLM Judges)** — *recommended*. N cross-family judges score independently, then aggregate. Eliminates self-preference and cognitive lock-in that a single judge silently introduces. Cross-family is mandatory: three GPT-4 variants voting ≠ a panel.
 
-loader = ConfigLoader("configs")
-profile = loader.get_judge_profile("default_judge")
-judge = LLMJudgeEvaluator.from_profile(profile)
-result = await judge.evaluate_async(prediction, reference, task=task_prompt)
+```yaml
+# configs/judge_panels.yaml
+judge_panels:
+  default_panel:
+    members:                          # references judge_profiles.yaml
+      - openai_judge                  # OpenAI family
+      - claude_judge                  # Anthropic family
+      - qwen_judge                    # Qwen family
+    aggregation: trimmed_mean         # mean | median | trimmed_mean | majority
+    disagreement_threshold: 0.3       # max-min > threshold → auto-label panel_disagree
+    require_diverse_families: true    # warns if same family appears ≥ 2 times
+    min_label_support: ceil_half      # a label needs ⌈N/2⌉ votes to survive
 ```
 
-Judge response JSON: `score`, `passed`, `labels`, `comment`, `evidence`, `dimensions`.
+```yaml
+# configs/environments.yaml — attach a judge to an env
+environments:
+  my_task:
+    class: DialogEnvironment
+    dataset: datasets/my_task.jsonl
+    judge_panel: default_panel        # or `judge: default_judge` for single mode
+```
+
+Aggregation rules (built-in, not magic):
+
+| Field | Aggregation |
+|---|---|
+| `score` | `trimmed_mean` of N member scores (drops one high + one low at N≥3) |
+| `passed` | majority vote, tie → `false` (conservative) |
+| `labels` | union, filter by `min_label_support` (default ⌈N/2⌉) |
+| `evidence` | union with dedup |
+| `comment` | concat with `[<member>]` prefix per judge |
+| `dimensions` | per-dim trimmed_mean |
+| `panel_disagree` | auto-added when `max(scores) - min(scores) > disagreement_threshold` |
+
+Cases tagged `panel_disagree` are the most valuable for human review — they expose rubric ambiguity, edge cases, or one judge being systematically off.
+
+```python
+# Library use (skips orchestrator)
+from src.core.config import ConfigLoader
+from src.metrics import LLMJudgeEvaluator, PanelLLMJudgeEvaluator
+
+loader = ConfigLoader("configs")
+
+# single
+judge = LLMJudgeEvaluator.from_profile(loader.get_judge_profile("default_judge"))
+
+# panel
+panel = PanelLLMJudgeEvaluator.from_panel_profile(
+    loader.get_judge_panel("default_panel"),
+    loader.load_judge_profiles(),
+)
+result = await panel.evaluate_async(prediction, reference, task=task_prompt)
+```
+
+Each judge's raw JSON output must contain: `score`, `passed`, `labels`, `comment`, `evidence`, `dimensions`. Panel `result.details["members"]` retains every member's raw verdict so case-study reports can drill in.
 
 ### 8. Reports
 
@@ -320,6 +371,10 @@ llm_profiles:
 
 ### 7. LLM-as-Judge
 
+两种模式都已接入 orchestrator。在 `configs/environments.yaml` 给某个 env 配 `judge` 或 `judge_panel` 字段，跑完任务后会自动调裁判评分。
+
+**单裁判**（便宜，但带入单家族系统性偏差）：
+
 ```yaml
 # configs/judge_profiles.yaml
 judge_profiles:
@@ -333,17 +388,64 @@ judge_profiles:
       请根据任务、参考答案和模型输出进行评审，只输出合法 JSON。
 ```
 
-```python
-from src.core.config import ConfigLoader
-from src.metrics import LLMJudgeEvaluator
+**Judge Panel (PoLL — Panel of LLM Judges)** — **推荐**。N 个跨家族裁判并发独立打分再聚合，抵消单裁判的 self-preference 和 cognitive lock-in。**前提是跨家族**——3 个 GPT-4 变体投票不是 panel，只是浪费 token。
 
-loader = ConfigLoader("configs")
-profile = loader.get_judge_profile("default_judge")
-judge = LLMJudgeEvaluator.from_profile(profile)
-result = await judge.evaluate_async(prediction, reference, task=task_prompt)
+```yaml
+# configs/judge_panels.yaml
+judge_panels:
+  default_panel:
+    members:                          # 引用 judge_profiles.yaml 中的 judge 名字
+      - openai_judge                  # OpenAI 家族
+      - claude_judge                  # Anthropic 家族
+      - qwen_judge                    # Qwen 家族
+    aggregation: trimmed_mean         # mean | median | trimmed_mean | majority
+    disagreement_threshold: 0.3       # max-min > 阈值 → 自动加 panel_disagree 标签
+    require_diverse_families: true    # 同家族 ≥ 2 个时 warning
+    min_label_support: ceil_half      # label 至少 ⌈N/2⌉ 票才保留
 ```
 
-Judge 返回 JSON：`score`、`passed`、`labels`、`comment`、`evidence`、`dimensions`。
+```yaml
+# configs/environments.yaml — 给 env 挂裁判
+environments:
+  my_task:
+    class: DialogEnvironment
+    dataset: datasets/my_task.jsonl
+    judge_panel: default_panel        # 或 `judge: default_judge` 走单裁判
+```
+
+聚合规则（内置）：
+
+| 字段 | 聚合 |
+|---|---|
+| `score` | N 个成员的 `trimmed_mean`（N≥3 时去掉最高、最低各一） |
+| `passed` | 多数票，平票 → `false`（保守） |
+| `labels` | union，按 `min_label_support`（默认 ⌈N/2⌉）过滤 |
+| `evidence` | union 去重 |
+| `comment` | 拼接，每条带 `[<成员>]` 前缀，可追溯 |
+| `dimensions` | 按维度独立 trimmed_mean |
+| `panel_disagree` | `max(scores) - min(scores) > disagreement_threshold` 时自动加 |
+
+带 `panel_disagree` 的 case 是金矿——暴露 rubric 歧义、边界 case，或某个裁判系统性偏，人工 review 价值最大。
+
+```python
+# 库级用法（绕过 orchestrator）
+from src.core.config import ConfigLoader
+from src.metrics import LLMJudgeEvaluator, PanelLLMJudgeEvaluator
+
+loader = ConfigLoader("configs")
+
+# 单裁判
+judge = LLMJudgeEvaluator.from_profile(loader.get_judge_profile("default_judge"))
+
+# Panel
+panel = PanelLLMJudgeEvaluator.from_panel_profile(
+    loader.get_judge_panel("default_panel"),
+    loader.load_judge_profiles(),
+)
+result = await panel.evaluate_async(prediction, reference, task=task_prompt)
+```
+
+每个裁判原始 JSON 必须包含：`score`、`passed`、`labels`、`comment`、`evidence`、`dimensions`。Panel 的 `result.details["members"]` 完整保留每个成员的原始判定，case study 报告可下钻每个裁判看了什么。
 
 ### 8. 输出报告
 

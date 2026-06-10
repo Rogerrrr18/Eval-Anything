@@ -5,6 +5,8 @@ from .evaluators import (
     F1MatchEvaluator,
     FieldMatchEvaluator,
     LLMJudgeEvaluator,
+    PanelLLMJudgeEvaluator,
+    detect_family,
 )
 from .qualitative import QualitativeAnalyzer
 from .quantitative import QuantitativeMetrics
@@ -16,6 +18,8 @@ __all__ = [
     "F1MatchEvaluator",
     "FieldMatchEvaluator",
     "LLMJudgeEvaluator",
+    "PanelLLMJudgeEvaluator",
     "QualitativeAnalyzer",
     "QuantitativeMetrics",
+    "detect_family",
 ]
