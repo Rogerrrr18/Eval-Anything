@@ -231,6 +231,30 @@ judge_panels:
 
 **Agent 在 design-experiment 闸门 3 写入配置时**：如果用户用了 `dialog_judge` 任务类型或评测维度里出现"主观"、"质量"、"风格"等关键词，默认把环境的 `judge_panel` 字段设为 `default_panel`，并在 reasoning 段说明"已挂 3 家族 panel 抵消单裁判偏差"。
 
+## 5.2 内置 panel preset
+
+`configs/judge_panels.yaml` 自带 4 个 preset，agent 按用户场景选：
+
+| Preset | 何时用 |
+|---|---|
+| `default_panel` (gpt-4o + claude-sonnet + qwen-max) | 默认，绝大多数主观任务 |
+| `budget_panel` (mini/haiku/plus 档) | 大批量跑、CI、用户明说"省钱"或"快" |
+| `frontier_panel` (o3 + opus + qwen-max) | 用户提到"正式发布"、"对外报告"、"论文" |
+| `domestic_panel` (qwen + glm + kimi) | 用户提到"合规"、"数据不出境"、"国内部署" |
+
+如果用户描述涉及"完全本地"、"私域 GPU"、"离线"，agent 应提示对方先起 3 个本地 vLLM 端点，然后引导用户复制 `local_vllm_judge` 为 N 份不同家族的开源模型，再在 `judge_panels.yaml` 里组装 `local_panel`（YAML 里已有注释模板）。
+
+## 5.3 临时切换裁判模型（不动 YAML）
+
+所有 catalog 里的 judge 都用 `${<FAMILY>_JUDGE_MODEL:-default}` 占位，用户可以临时改环境变量做 A/B：
+
+```bash
+export OPENAI_JUDGE_MODEL=gpt-4o-mini    # 临时降档
+export QWEN_JUDGE_MODEL=qwen2.5-72b-instruct
+```
+
+Agent 看到用户说"我想 A/B 测一下两个裁判"或"先用便宜的 mini 跑一遍看看"时，应推荐这个用法，**不要**改 YAML（会污染 git）。
+
 ## 字段命名约定
 
 - profile 名：`<provider>_<model>_<variant>`，如 `deepseek_v4_flash`、`qwen3_4b`、`gpt4o_mini`

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sysconfig
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -209,8 +210,8 @@ class ConfigLoader:
             profiles[name] = LLMProfile(
                 name=name,
                 class_name=cfg.get("class", "OpenAICompatibleLLM"),
-                model_name=cfg.get("model_name", name),
-                endpoint_url=cfg.get("endpoint_url", ""),
+                model_name=self._resolve_env_value(cfg.get("model_name", name)),
+                endpoint_url=self._resolve_env_value(cfg.get("endpoint_url", "")),
                 api_key=api_key,
                 api_key_env=cfg.get("api_key_env"),
                 temperature=cfg.get("temperature", 0.0),
@@ -224,29 +225,49 @@ class ConfigLoader:
         return profiles
 
     @staticmethod
-    def _resolve_api_key(raw_key: str, key_env: Optional[str]) -> str:
+    def _resolve_env_value(raw: Any) -> Any:
+        """通用 ${VAR} / ${VAR:-default} 环境变量插值。
+
+        支持三种形态：
+          1. 不含 ${...} → 原样返回（数值 / bool / list 等也走这里直接返回）
+          2. "${VAR}" → 读 VAR；未设则保留原 placeholder（让下游报错，避免静默用空串）
+          3. "${VAR:-default}" → 读 VAR；未设则用 default
+
+        允许字符串里嵌入多个 ${...}，每个独立解析。
+        """
+        if not isinstance(raw, str) or "${" not in raw:
+            return raw
+
+        pattern = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
+
+        def _sub(match: "re.Match[str]") -> str:
+            var = match.group(1)
+            default = match.group(2)
+            val = os.getenv(var)
+            if val is not None and val != "":
+                return val
+            if default is not None:
+                return default
+            # 没设 + 没 default → 保留原 placeholder，让用户在第一次调用时看见
+            return match.group(0)
+
+        return pattern.sub(_sub, raw)
+
+    @classmethod
+    def _resolve_api_key(cls, raw_key: str, key_env: Optional[str]) -> str:
         """解析 api_key。
 
         优先级:
           1. api_key_env 显式指定的环境变量
-          2. raw_key 中的 ${VAR} 替换
+          2. raw_key 中的 ${VAR} / ${VAR:-default} 替换
           3. raw_key 本身（明文，或 "EMPTY"）
-
-        如果 env 变量没设但被引用了，返回原 placeholder（让端点报 401 而不是悄悄用空字符串）。
         """
         if key_env:
             val = os.getenv(key_env)
             if val:
                 return val
             # 落到 raw_key 兜底（可能也是 EMPTY）
-        if isinstance(raw_key, str) and raw_key.startswith("${") and raw_key.endswith("}"):
-            var = raw_key[2:-1]
-            val = os.getenv(var)
-            if val:
-                return val
-            # 显式提示用户：变量没设
-            return raw_key  # 保留 placeholder，端点请求会失败让用户看见
-        return raw_key
+        return cls._resolve_env_value(raw_key)
 
     def load_judge_profiles(self) -> Dict[str, JudgeProfile]:
         """加载所有 LLM Judge profile。不存在配置文件时返回空字典。"""
@@ -271,8 +292,8 @@ class ConfigLoader:
             profiles[name] = JudgeProfile(
                 name=name,
                 class_name=cfg.get("class", "OpenAICompatibleLLM"),
-                model_name=cfg.get("model_name", name),
-                endpoint_url=cfg.get("endpoint_url", ""),
+                model_name=self._resolve_env_value(cfg.get("model_name", name)),
+                endpoint_url=self._resolve_env_value(cfg.get("endpoint_url", "")),
                 api_key=api_key,
                 temperature=cfg.get("temperature", 0.0),
                 max_tokens=cfg.get("max_tokens", 800),

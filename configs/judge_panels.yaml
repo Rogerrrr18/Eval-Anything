@@ -1,10 +1,10 @@
-# Panel of LLM Judges (PoLL) 配置
-#
-# 用 N 个跨模型家族的裁判并发独立打分，再聚合（trimmed_mean + 多数票），
+# Panel of LLM Judges (PoLL) — 跨家族多裁判组合
+# ============================================================================
+# 设计：N 个跨模型家族的裁判并发独立打分 + 聚合（trimmed_mean + 多数票），
 # 抵消单裁判的 self-preference bias 和 cognitive lock-in。
-# 关键前提：成员必须跨家族。3 个 GPT-4 变体投票 ≠ panel，只是浪费 token。
 #
-# members 字段引用 judge_profiles.yaml 中的 judge 名字。
+# 关键约束：成员必须跨家族。3 个 GPT-4 变体投票 ≠ panel，只是浪费 token。
+# 所有成员引用 judge_profiles.yaml 里的 judge 名字（一份 catalog，多份组合）。
 #
 # 聚合参数：
 #   aggregation              : trimmed_mean(默认) | mean | median | majority
@@ -14,35 +14,84 @@
 #   require_diverse_families : true 时若发现同家族 ≥ 2 个 → warning（不阻塞启动）
 #   min_label_support        : ceil_half(默认) | majority | all
 #                              一个 label 至少要这么多成员同意才进 consensus_labels
+#
+# 用户切换 panel：在 environments.yaml 的某个 env 上设 judge_panel: <panel_name>
+# ============================================================================
 
 judge_panels:
 
+  # ── 推荐默认 panel：三大主流家族旗舰档 ─────────────────────────────────────
+  # 适合大多数场景。需要 OPENAI_API_KEY + ANTHROPIC_API_KEY + DASHSCOPE_API_KEY。
   default_panel:
-    description: "三家族默认 panel：OpenAI + Anthropic + Qwen"
+    description: "默认 panel：OpenAI gpt-4o + Anthropic Claude Sonnet + Qwen Max"
     members:
-      - openai_judge       # OpenAI 家族
-      - claude_judge       # Anthropic 家族
-      - qwen_judge         # Qwen 家族
+      - openai_judge          # OpenAI 家族
+      - claude_judge          # Anthropic 家族
+      - qwen_judge            # Qwen 家族
     aggregation: trimmed_mean
     disagreement_threshold: 0.3
     require_diverse_families: true
     min_label_support: ceil_half
 
-  # 全本地化 panel（不出网，便于 CI / 私域评测）。
-  # 需要先在 llm_profiles.yaml 配本地端点，再在 judge_profiles.yaml 加对应 judge。
+  # ── 省钱档：mini/haiku/plus 三家族 ─────────────────────────────────────────
+  # token 成本约为 default_panel 的 1/10 ~ 1/5。
+  # 同样 3 家族，去偏差效果只略降，适合大批量 / CI / 预算敏感场景。
+  budget_panel:
+    description: "省钱 panel：gpt-4o-mini + Claude Haiku + Qwen Plus"
+    members:
+      - openai_mini_judge
+      - claude_haiku_judge
+      - qwen_plus_judge
+    aggregation: trimmed_mean
+    disagreement_threshold: 0.3
+    require_diverse_families: true
+    min_label_support: ceil_half
+
+  # ── 顶级 panel：每家最强档 ─────────────────────────────────────────────────
+  # 给关键发布、对外报告、研究论文级评测用。token 成本最高。
+  frontier_panel:
+    description: "顶级 panel：o3-mini + Claude Opus + Qwen Max"
+    members:
+      - openai_o3_judge
+      - claude_opus_judge
+      - qwen_judge
+    aggregation: trimmed_mean
+    disagreement_threshold: 0.25      # 顶级模型间分歧更值得 review
+    require_diverse_families: true
+    min_label_support: ceil_half
+
+  # ── 国产 panel：纯境内 API，无需出海 ──────────────────────────────────────
+  # 适合数据合规敏感、企业内网允许境内 API 但不允许海外的场景。
+  domestic_panel:
+    description: "国产 panel：Qwen + GLM + Kimi（DeepSeek 可替换任一）"
+    members:
+      - qwen_judge            # 阿里
+      - glm_judge             # 智谱
+      - kimi_judge            # 月之暗面
+    aggregation: trimmed_mean
+    disagreement_threshold: 0.3
+    require_diverse_families: true
+    min_label_support: ceil_half
+
+  # ── 完全本地 panel：不出网，CI / 私域 ─────────────────────────────────────
+  # 需要先起 3 个 vLLM/SGLang/Ollama 进程跑不同家族开源模型。
+  # 改 LOCAL_*_ENDPOINT 环境变量指向你的端点即可。
   # local_panel:
-  #   description: "本地 vLLM 三家族 panel"
+  #   description: "全本地 panel：3 个端口跑不同家族开源模型"
   #   members:
-  #     - deepseek_local_judge
-  #     - qwen_local_judge
-  #     - glm_local_judge
+  #     - local_vllm_judge    # 默认 qwen2.5-72b
+  #     # 你可以复制 local_vllm_judge 改成 local_deepseek_judge / local_llama_judge
+  #     # 然后在这里引用
   #   aggregation: trimmed_mean
   #   disagreement_threshold: 0.3
+  #   require_diverse_families: true
 
-  # 严格 panel：要求所有成员一致才通过；分歧严格暴露给人工。
+  # ── 严格 panel：要求全员一致 ──────────────────────────────────────────────
+  # 多数票不够稳的场景。任何成员有分歧都进 review queue。
   # strict_panel:
   #   description: "全员一致才通过的高标准 panel"
   #   members: [openai_judge, claude_judge, qwen_judge]
   #   aggregation: median
   #   disagreement_threshold: 0.2
+  #   require_diverse_families: true
   #   min_label_support: all

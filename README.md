@@ -175,27 +175,47 @@ judge_profiles:
 
 **Judge panel (PoLL — Panel of LLM Judges)** — *recommended*. N cross-family judges score independently, then aggregate. Eliminates self-preference and cognitive lock-in that a single judge silently introduces. Cross-family is mandatory: three GPT-4 variants voting ≠ a panel.
 
-```yaml
-# configs/judge_panels.yaml
-judge_panels:
-  default_panel:
-    members:                          # references judge_profiles.yaml
-      - openai_judge                  # OpenAI family
-      - claude_judge                  # Anthropic family
-      - qwen_judge                    # Qwen family
-    aggregation: trimmed_mean         # mean | median | trimmed_mean | majority
-    disagreement_threshold: 0.3       # max-min > threshold → auto-label panel_disagree
-    require_diverse_families: true    # warns if same family appears ≥ 2 times
-    min_label_support: ceil_half      # a label needs ⌈N/2⌉ votes to survive
-```
+`configs/judge_profiles.yaml` ships a **15-judge catalog** spanning OpenAI · Anthropic · Qwen · DeepSeek · Zhipu GLM · Moonshot Kimi · Google Gemini · local vLLM. Pick any cross-family triple to compose a panel; or use one of the four built-in presets:
+
+| Preset | Composition | Cost vs default | When |
+|---|---|---|---|
+| `default_panel` | gpt-4o + claude-sonnet-4 + qwen-max | 1× | Most cases |
+| `budget_panel` | gpt-4o-mini + claude-haiku + qwen-plus | ~0.1–0.2× | Bulk runs, CI |
+| `frontier_panel` | o3-mini + claude-opus + qwen-max | ~2–3× | Releases, papers |
+| `domestic_panel` | qwen-max + glm-4-plus + kimi | ~0.5× | China-only deploy |
 
 ```yaml
-# configs/environments.yaml — attach a judge to an env
+# configs/environments.yaml — pick any preset
 environments:
   my_task:
     class: DialogEnvironment
     dataset: datasets/my_task.jsonl
-    judge_panel: default_panel        # or `judge: default_judge` for single mode
+    judge_panel: default_panel        # or budget_panel / frontier_panel / domestic_panel
+```
+
+**Swap judge models without editing YAML.** Every catalog entry uses `${VAR:-default}` so you can hot-swap via env vars:
+
+```bash
+# A/B-test gpt-4o-mini vs gpt-4o as the OpenAI judge, no git diff
+export OPENAI_JUDGE_MODEL=gpt-4o-mini
+export QWEN_JUDGE_MODEL=qwen2.5-72b-instruct
+eval-anything --experiment my_exp --config-dir configs
+```
+
+Roll your own panel:
+
+```yaml
+# configs/judge_panels.yaml
+judge_panels:
+  my_custom_panel:
+    members:                          # references judge_profiles.yaml
+      - openai_judge                  # OpenAI family
+      - claude_judge                  # Anthropic family
+      - deepseek_judge                # DeepSeek family
+    aggregation: trimmed_mean         # mean | median | trimmed_mean | majority
+    disagreement_threshold: 0.3       # max-min > threshold → auto-label panel_disagree
+    require_diverse_families: true    # warns if same family appears ≥ 2 times
+    min_label_support: ceil_half      # a label needs ⌈N/2⌉ votes to survive
 ```
 
 Aggregation rules (built-in, not magic):
@@ -390,27 +410,47 @@ judge_profiles:
 
 **Judge Panel (PoLL — Panel of LLM Judges)** — **推荐**。N 个跨家族裁判并发独立打分再聚合，抵消单裁判的 self-preference 和 cognitive lock-in。**前提是跨家族**——3 个 GPT-4 变体投票不是 panel，只是浪费 token。
 
-```yaml
-# configs/judge_panels.yaml
-judge_panels:
-  default_panel:
-    members:                          # 引用 judge_profiles.yaml 中的 judge 名字
-      - openai_judge                  # OpenAI 家族
-      - claude_judge                  # Anthropic 家族
-      - qwen_judge                    # Qwen 家族
-    aggregation: trimmed_mean         # mean | median | trimmed_mean | majority
-    disagreement_threshold: 0.3       # max-min > 阈值 → 自动加 panel_disagree 标签
-    require_diverse_families: true    # 同家族 ≥ 2 个时 warning
-    min_label_support: ceil_half      # label 至少 ⌈N/2⌉ 票才保留
-```
+`configs/judge_profiles.yaml` 自带一份 **15 个 judge 的 catalog**，覆盖 OpenAI · Anthropic · Qwen · DeepSeek · 智谱 GLM · 月之暗面 Kimi · Google Gemini · 本地 vLLM。挑任意跨家族三个组成 panel，或直接用内置四个 preset：
+
+| Preset | 组成 | 相对成本 | 用于 |
+|---|---|---|---|
+| `default_panel` | gpt-4o + claude-sonnet-4 + qwen-max | 1× | 大多数场景 |
+| `budget_panel` | gpt-4o-mini + claude-haiku + qwen-plus | ~0.1–0.2× | 大批量跑 / CI |
+| `frontier_panel` | o3-mini + claude-opus + qwen-max | ~2–3× | 正式发布、对外报告 |
+| `domestic_panel` | qwen-max + glm-4-plus + kimi | ~0.5× | 国产合规 / 不能出海 |
 
 ```yaml
-# configs/environments.yaml — 给 env 挂裁判
+# configs/environments.yaml — 挑 preset
 environments:
   my_task:
     class: DialogEnvironment
     dataset: datasets/my_task.jsonl
-    judge_panel: default_panel        # 或 `judge: default_judge` 走单裁判
+    judge_panel: default_panel        # 或 budget_panel / frontier_panel / domestic_panel
+```
+
+**不改 YAML 就换模型。** Catalog 里每个 judge 都用 `${VAR:-default}` 写死，环境变量直接覆盖：
+
+```bash
+# 把 OpenAI 裁判从 gpt-4o 临时换成 gpt-4o-mini，git 不动
+export OPENAI_JUDGE_MODEL=gpt-4o-mini
+export QWEN_JUDGE_MODEL=qwen2.5-72b-instruct
+eval-anything --experiment my_exp --config-dir configs
+```
+
+自己拼一个 panel：
+
+```yaml
+# configs/judge_panels.yaml
+judge_panels:
+  my_custom_panel:
+    members:                          # 引用 judge_profiles.yaml 中的 judge 名字
+      - openai_judge                  # OpenAI 家族
+      - claude_judge                  # Anthropic 家族
+      - deepseek_judge                # DeepSeek 家族
+    aggregation: trimmed_mean         # mean | median | trimmed_mean | majority
+    disagreement_threshold: 0.3       # max-min > 阈值 → 自动加 panel_disagree 标签
+    require_diverse_families: true    # 同家族 ≥ 2 个时 warning
+    min_label_support: ceil_half      # label 至少 ⌈N/2⌉ 票才保留
 ```
 
 聚合规则（内置）：
