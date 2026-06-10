@@ -46,6 +46,7 @@ class ExperimentConfig:
     environments: List[str] = field(default_factory=list)
     execution: ExecutionConfig = field(default_factory=ExecutionConfig)
     reporting: ReportingConfig = field(default_factory=ReportingConfig)
+    pairwise_judge: Optional[str] = None  # 可选：pairwise 对比用的 judge 名字（来自 judge_profiles.yaml）
 
 
 # ── Profile 加载 ──
@@ -130,8 +131,25 @@ class EnvironmentProfile:
     dataset: str = ""
     description: str = ""
     max_steps: int = 20
+    target: Optional[str] = None       # 引用 TargetProfile，用于评测完整应用/服务
     judge: Optional[str] = None        # 引用单个 JudgeProfile
     judge_panel: Optional[str] = None  # 引用 JudgePanelProfile，与 judge 二选一，panel 优先
+    calibration_set: Optional[str] = None  # 可选：校准集路径（JSONL），配置后会在主任务跑完后自动跑 judge 校准
+    extra_params: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class TargetProfile:
+    """一个被测系统配置。可以是 HTTP App、CLI、浏览器应用等。"""
+    name: str
+    class_name: str = "HTTPAppTarget"
+    base_url: str = ""
+    endpoints: Dict[str, str] = field(default_factory=dict)
+    headers: Dict[str, str] = field(default_factory=dict)
+    api_key: str = "EMPTY"
+    api_key_env: Optional[str] = None
+    timeout_seconds: int = 60
+    description: str = ""
     extra_params: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -148,6 +166,7 @@ class ConfigLoader:
         self._judge_panels: Optional[Dict[str, JudgePanelProfile]] = None
         self._harness_profiles: Optional[Dict[str, HarnessProfile]] = None
         self._env_profiles: Optional[Dict[str, EnvironmentProfile]] = None
+        self._target_profiles: Optional[Dict[str, TargetProfile]] = None
 
     def _resolve_config_dir(self, config_dir: str) -> Path:
         """解析配置目录，兼容源码运行和 pip 安装后的 data-files。"""
@@ -190,6 +209,7 @@ class ConfigLoader:
             environments=exp.get("environments", []),
             execution=ExecutionConfig(**execution_raw) if execution_raw else ExecutionConfig(),
             reporting=ReportingConfig(**reporting_raw) if reporting_raw else ReportingConfig(),
+            pairwise_judge=exp.get("pairwise_judge"),
         )
 
     def load_llm_profiles(self) -> Dict[str, LLMProfile]:
@@ -382,11 +402,47 @@ class ConfigLoader:
                 dataset=cfg.get("dataset", ""),
                 description=cfg.get("description", ""),
                 max_steps=cfg.get("max_steps", 20),
+                target=cfg.get("target"),
                 judge=cfg.get("judge"),
                 judge_panel=cfg.get("judge_panel"),
+                calibration_set=cfg.get("calibration_set"),
                 extra_params=cfg.get("extra_params", {}),
             )
         self._env_profiles = profiles
+        return profiles
+
+    def load_target_profiles(self) -> Dict[str, TargetProfile]:
+        """加载所有 Target profile。不存在配置文件时返回空字典。"""
+        if self._target_profiles is not None:
+            return self._target_profiles
+
+        path = self.config_dir / "targets.yaml"
+        if not path.exists():
+            self._target_profiles = {}
+            return self._target_profiles
+
+        with open(path, "r", encoding="utf-8") as f:
+            raw = yaml.safe_load(f) or {}
+
+        profiles = {}
+        for name, cfg in raw.get("targets", {}).items():
+            api_key = self._resolve_api_key(
+                raw_key=cfg.get("api_key", "EMPTY"),
+                key_env=cfg.get("api_key_env"),
+            )
+            profiles[name] = TargetProfile(
+                name=name,
+                class_name=cfg.get("class", "HTTPAppTarget"),
+                base_url=self._resolve_env_value(cfg.get("base_url", "")),
+                endpoints=dict(cfg.get("endpoints", {})),
+                headers=dict(cfg.get("headers", {})),
+                api_key=api_key,
+                api_key_env=cfg.get("api_key_env"),
+                timeout_seconds=cfg.get("timeout_seconds", 60),
+                description=cfg.get("description", ""),
+                extra_params=cfg.get("extra_params", {}),
+            )
+        self._target_profiles = profiles
         return profiles
 
     def get_llm_profile(self, name: str) -> LLMProfile:
@@ -411,4 +467,10 @@ class ConfigLoader:
         profiles = self.load_env_profiles()
         if name not in profiles:
             raise KeyError(f"未找到 Environment profile: {name!r}。可用: {list(profiles.keys())}")
+        return profiles[name]
+
+    def get_target_profile(self, name: str) -> TargetProfile:
+        profiles = self.load_target_profiles()
+        if name not in profiles:
+            raise KeyError(f"未找到 Target profile: {name!r}。可用: {list(profiles.keys())}")
         return profiles[name]

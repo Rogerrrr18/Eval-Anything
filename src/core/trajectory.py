@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..harness.base import StepRecord
 
@@ -90,6 +90,7 @@ class ExperimentResult:
     experiment_name: str
     combo_results: List[ComboResult]
     config_snapshot: Dict[str, Any] = field(default_factory=dict)
+    pairwise: Optional[Dict[str, Any]] = None  # 可选：pairwise 对比结果（由 PairwiseExperimentResult.to_dict() 填充）
 
     def get_all_trajectories(self) -> List[Trajectory]:
         """获取所有轨迹。"""
