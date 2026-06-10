@@ -409,3 +409,19 @@ start tools/star_dashboard.html       # Windows
 - 最近 stargazers 列表（头像 + 时间）
 
 默认监控 `Rogerrrr18/Eval-Anything`；改顶部输入框可盯任意公开仓库。未鉴权配额 60 次/小时；填一个 PAT 可提升到 5000 次/小时。
+
+---
+
+## Star History
+
+<div align="center">
+
+<a href="https://www.star-history.com/#Rogerrrr18/Eval-Anything&Date">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Rogerrrr18/Eval-Anything&type=Date&theme=dark" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Rogerrrr18/Eval-Anything&type=Date" />
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=Rogerrrr18/Eval-Anything&type=Date" width="720" />
+ </picture>
+</a>
+
+</div>
