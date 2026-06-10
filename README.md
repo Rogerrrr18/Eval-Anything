@@ -18,17 +18,11 @@
 
 ### Repo: **[github.com/Rogerrrr18/Eval-Anything](https://github.com/Rogerrrr18/Eval-Anything)**
 
-[English](#english) · [中文](#中文) · [Star Dashboard](tools/star_dashboard.html) · [Skill](skills/eval-anything/SKILL.md)
+[English](#english) · [中文](#中文) · [Star History](#star-history) · [Skill](skills/eval-anything/SKILL.md)
 
 <sub>One pipeline. Any coding agent (Claude Code · Cursor · Codex · Gemini CLI · …) drives it.<br/>Plug in your LLM via OpenAI-compatible endpoint — vLLM, SGLang, Ollama, DeepSeek, Qwen, Kimi, GLM.</sub>
 
 </div>
-
----
-
-## Star the Project
-
-If Eval-Anything saves you time, the cheapest thanks is a **[github.com/Rogerrrr18/Eval-Anything](https://github.com/Rogerrrr18/Eval-Anything)**.  Track project momentum in real time with the built-in [star dashboard](tools/star_dashboard.html) — just open the HTML file in any browser.
 
 ---
 
@@ -206,27 +200,6 @@ Judge response JSON: `score`, `passed`, `labels`, `comment`, `evidence`, `dimens
 
 Full steps in `skills/eval-anything/references/extending.md`.
 
-### 10. Star monitor
-
-A zero-dependency GitHub-star dashboard ships with the repo (pure static HTML):
-
-```bash
-open tools/star_dashboard.html        # macOS
-xdg-open tools/star_dashboard.html    # Linux
-start tools/star_dashboard.html       # Windows
-```
-
-It hits the GitHub stargazers API and draws:
-
-- Total stars + week-over-week delta
-- Cumulative star curve (by real `starred_at` timestamps)
-- Daily new stars (last 30 days) + weekly new stars (last 12 weeks)
-- Recent stargazers (avatar + date)
-
-Defaults to `Rogerrrr18/Eval-Anything`; change the input at the top to
-watch any public repo. Unauthenticated quota is 60/h; paste a personal
-access token to bump to 5000/h.
-
 ---
 
 ## 中文
@@ -390,25 +363,6 @@ Judge 返回 JSON：`score`、`passed`、`labels`、`comment`、`evidence`、`di
 - **新 Environment** → `src/environment/` 下继承 `BaseEnvironment`，注册到 `_ENV_REGISTRY`，加 profile
 
 完整步骤见 `skills/eval-anything/references/extending.md`。
-
-### 10. Star 监控面板
-
-仓库自带一个零依赖的 GitHub Star 监控仪表盘（纯静态 HTML，无后端无 token 也能跑）：
-
-```bash
-open tools/star_dashboard.html        # macOS
-xdg-open tools/star_dashboard.html    # Linux
-start tools/star_dashboard.html       # Windows
-```
-
-页面调 GitHub stargazers API 画出：
-
-- 当前总 star 数 + 与上周对比
-- 累计 star 曲线（按真实 `starred_at` 时间戳）
-- 最近 30 天每日新增 + 最近 12 周每周新增
-- 最近 stargazers 列表（头像 + 时间）
-
-默认监控 `Rogerrrr18/Eval-Anything`；改顶部输入框可盯任意公开仓库。未鉴权配额 60 次/小时；填一个 PAT 可提升到 5000 次/小时。
 
 ---
 
