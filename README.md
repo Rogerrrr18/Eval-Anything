@@ -1,8 +1,34 @@
+<div align="center">
+
 # Eval-Anything
 
-A modular **agent skill** + **evaluation runtime** for LLM × Harness × Environment matrix benchmarking.
+---
 
-**[English](#english)** · **[中文](#中文)**
+### The Agent-Driven Evaluation Engine for<br/>**LLM** × **Harness** × **Environment** Matrix Benchmarking
+
+<p>
+
+![version](https://img.shields.io/badge/version-0.1.0-2188ff?style=for-the-badge)
+![python](https://img.shields.io/badge/python-3.10%2B-blue?style=for-the-badge&logo=python&logoColor=white)
+![license](https://img.shields.io/github/license/Rogerrrr18/Eval-Anything?style=for-the-badge&color=informational)
+![driven by](https://img.shields.io/badge/driven_by-any_coding_agent-7e57c2?style=for-the-badge)
+![stars](https://img.shields.io/github/stars/Rogerrrr18/Eval-Anything?style=for-the-badge&logo=github&color=yellow)
+
+</p>
+
+### Repo: **[github.com/Rogerrrr18/Eval-Anything](https://github.com/Rogerrrr18/Eval-Anything)**
+
+[English](#english) · [中文](#中文) · [Star Dashboard](tools/star_dashboard.html) · [Skill](skills/eval-anything/SKILL.md)
+
+<sub>One pipeline. Any coding agent (Claude Code · Cursor · Codex · Gemini CLI · …) drives it.<br/>Plug in your LLM via OpenAI-compatible endpoint — vLLM, SGLang, Ollama, DeepSeek, Qwen, Kimi, GLM.</sub>
+
+</div>
+
+---
+
+## Star the Project
+
+If Eval-Anything saves you time, the cheapest thanks is a **[github.com/Rogerrrr18/Eval-Anything](https://github.com/Rogerrrr18/Eval-Anything)**.  Track project momentum in real time with the built-in [star dashboard](tools/star_dashboard.html) — just open the HTML file in any browser.
 
 ---
 
