@@ -213,4 +213,4 @@ def auto_select(task_type, eval_dims, env_class, llm_profiles, existing_harnesse
     }
 ```
 
-skill 在驾驶 LLM 这一侧不需要真跑 Python——驾驶 LLM 按本文档的规则**心算**出结果即可。把这份规则当成 skill 的"内嵌专家"。
+skill 在 agent 这一侧不需要真跑 Python——agent 按本文档的规则**心算**出结果即可。把这份规则当成 skill 的"内嵌专家"。

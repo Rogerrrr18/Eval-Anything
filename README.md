@@ -47,7 +47,7 @@ eval-anything --llm deepseek_v4_flash --harness raw --env slot_filling_xiu --con
 
 ## 3. 用法 B：Agent Skill（让任意 coding agent 驱动你跑评测）
 
-`skills/eval-anything/` 是一份自包含的 **agent skill**：决策树、自动选择算法、模板、4 道人工闸门规约全在里面。**不绑定任何驾驶 LLM**——你用 Claude Code 就 Claude Code，用 Cursor Agent 就 Cursor Agent，agent 用自己原生的 `Read`/`Write`/`Edit`/`Bash` 工具操作仓库即可。
+`skills/eval-anything/` 是一份自包含的 **agent skill**：决策树、自动选择算法、模板、4 道人工闸门规约全在里面。**不绑定任何具体 agent / LLM**——你用 Claude Code 就 Claude Code，用 Cursor Agent 就 Cursor Agent，agent 用自己原生的 `Read`/`Write`/`Edit`/`Bash` 工具操作仓库即可。
 
 ### 喂给 Claude Code
 

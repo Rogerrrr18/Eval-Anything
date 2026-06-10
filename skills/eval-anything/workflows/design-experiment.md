@@ -18,7 +18,7 @@
 
 用户的自然语言描述。
 
-### 驾驶 LLM 要做的事
+### Agent 要做的事
 
 1. 仔细听用户描述，归类到下面任务类型之一（中文别名只是触发词，最终归类用英文）：
    - **slot_filling**: 槽位填充 / 信息抽取 / NLU
@@ -54,7 +54,7 @@ options:
 
 ## Step 2: 数据集来源选择
 
-### 驾驶 LLM 要做的事
+### Agent 要做的事
 
 1. 读 `references/datasets.md`，找该任务类型对应的开源候选。
 2. 如果当前 `datasets/` 已有对应任务的 JSONL，把它作为"已有数据"选项列出。
@@ -100,7 +100,7 @@ A + B 都做，最后把两个 JSONL 合并到一个文件，或者作为两个 
 
 **关键变化**：本步骤**不再问用户"要哪些 harness"**——这是工程细节，应该由 skill 内置算法自动决定。
 
-驾驶 LLM 必须读 `references/harness-selection.md` 后按算法心算出：
+Agent 必须读 `references/harness-selection.md` 后按算法心算出：
 - `harness_profiles`: 要跑的 harness 名列表（永远含 `raw` 基线）
 - `harness_overrides`: 每个 harness 的 `max_steps` 等超参
 - `filtered_combos`: 被剔除的 (LLM, harness) 不兼容组合 + 理由
@@ -187,7 +187,7 @@ options:
 
 ## Step 4: Dry-run
 
-### 驾驶 LLM 要做的事
+### Agent 要做的事
 
 ```bash
 eval-agent --experiment <name> --config-dir configs --dry-run
@@ -214,7 +214,7 @@ options:
 
 ## Step 5: 正式跑 + 读报告
 
-### 驾驶 LLM 要做的事
+### Agent 要做的事
 
 1. 跑 `eval-agent --experiment <name> --config-dir configs --output-dir outputs/<name>_<YYYYMMDD_HHMM>`
 2. 跑完后按 `references/reports.md` 的"解读顺序"读：

@@ -74,7 +74,7 @@ experiment:
 
 ## Step 4: 兼容性预检（关键）
 
-在生成全矩阵 YAML 时驾驶 LLM 必须主动做这一步：
+在生成全矩阵 YAML 时 agent 必须主动做这一步：
 
 1. 对每个 (llm, harness) 组合检查：
    - 该 harness 用 `chat_with_tools` 吗？（FunctionCall 用）
