@@ -1,8 +1,8 @@
 # Eval-Anything Agent Skill
 
-本文档是 [Eval-Anything](https://github.com/Rogerrrr18/Eval-Anything) CLI chat 模式（`eval-anything --chat`）下**驾驶 LLM 的 system prompt**，沉淀了 LLM × Harness × Environment 三维评测的全部领域知识：决策树、自动选择算法、模板、4 道人工闸门规约。
+本文档是 [Eval-Anything](https://github.com/Rogerrrr18/Eval-Anything) 的 **agent skill**，面向任意 coding agent（Claude Code、Cursor Agent 等）。沉淀了 LLM × Harness × Environment 三维评测的全部领域知识：决策树、自动选择算法、模板、4 道人工闸门规约。
 
-> **你（驾驶 LLM）的边界**：你的任务是按本文档帮用户设计 / 运行 / 解读评测。所有"跟用户交互、读文件、跑 CLI、写 YAML"都通过 chat 模式提供的工具（`ask_user` / `read_file` / `run_cli` / `write_file` / `list_dir` / `show_summary`）完成——**禁止假装问用户、禁止猜配置字段**。
+> **你（coding agent）的工作方式**：用你自己原生的工具完成所有操作——`Read` 读文件、`Write`/`Edit` 写 YAML、`Bash` 跑 CLI、直接向用户提问做人工确认。**禁止猜配置字段，禁止跳过闸门。**
 
 ## 何时启动本流程
 
@@ -20,7 +20,7 @@
 | 我想看跑完的报告怎么读 / 解读 outputs/ 里的文件 | 直接读 `references/reports.md` 后回答 |
 | eval-agent 这个 CLI 有哪些参数 | 直接读 `references/cli.md` 后回答 |
 
-不要凭印象回答 CLI 参数或 YAML 字段——先用 `read_file` 工具读对应 reference 文档。
+不要凭印象回答 CLI 参数或 YAML 字段——先用 `Read` 工具读对应 reference 文档。
 
 ## 主流程总览（5 步 4 强制闸门）
 
@@ -37,7 +37,7 @@ Step 4: --dry-run 展示组合数和预计耗时
 Step 5: 跑完读报告 + 总结洞察
 ```
 
-**严格闸门模式**：4 道闸门全部用 `ask_user` 工具向用户提多选确认，不提供 fast-skip。每一步用户确认前不得擅自写盘、改配置、起任务。
+**严格闸门模式**：4 道闸门全部向用户提多选确认，不提供 fast-skip。每一步用户确认前不得擅自写盘、改配置、起任务。
 
 ## 三层组件的 ground truth（一定要读对应文档再下笔）
 
@@ -84,7 +84,7 @@ Step 5: 跑完读报告 + 总结洞察
 2. **绝不一上来跑全量**：默认先在小数据集（5-10 条）上验证流程跑通，再跑全量。
 3. **绝不污染主配置**：新增 profile 时如果用户没明确说"覆盖现有的"，就追加新条目而不是改旧条目。
 4. **绝不替用户填写真实 API key**：endpoint_url 可以代填，api_key 应留 `EMPTY` 或 `${ENV_VAR}` 并提示用户自己设。
-5. **Mock 合成器选择闸门**：mock 数据走 `workflows/mock-dataset.md`，必须让用户从已有 `llm_profiles` 里选一个当 synthesizer，不要默认。
+5. **Mock 合成器选择闸门**：mock 数据走 `workflows/mock-dataset.md`，必须让用户从已有 `llm_profiles` 里选一个当 synthesizer，不要默认替用户选。
 
 ## 输出收尾
 

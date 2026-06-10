@@ -39,28 +39,3 @@ include = ["src", "src.*"]
   "datasets/slot_filling/xiu_test.jsonl",
   "datasets/slot_filling/zhuang_test.jsonl"
 ]
-# Skill 内容：用于 CLI chat 模式当 system prompt，也用作 Claude Code plugin 的 skill 内容
-"eval-anything/skills/eval-anything" = [
-  "skills/eval-anything/SKILL.md"
-]
-"eval-anything/skills/eval-anything/references" = [
-  "skills/eval-anything/references/cli.md",
-  "skills/eval-anything/references/configs.md",
-  "skills/eval-anything/references/datasets.md",
-  "skills/eval-anything/references/extending.md",
-  "skills/eval-anything/references/harness-selection.md",
-  "skills/eval-anything/references/reports.md"
-]
-"eval-anything/skills/eval-anything/workflows" = [
-  "skills/eval-anything/workflows/add-harness.md",
-  "skills/eval-anything/workflows/add-llm.md",
-  "skills/eval-anything/workflows/compare-models.md",
-  "skills/eval-anything/workflows/design-experiment.md",
-  "skills/eval-anything/workflows/mock-dataset.md"
-]
-"eval-anything/skills/eval-anything/templates" = [
-  "skills/eval-anything/templates/dataset.jsonl.j2",
-  "skills/eval-anything/templates/environment.yaml.j2",
-  "skills/eval-anything/templates/experiment.yaml.j2",
-  "skills/eval-anything/templates/mock_synthesis_prompt.md"
-]
