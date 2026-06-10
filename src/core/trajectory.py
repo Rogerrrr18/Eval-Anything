@@ -81,6 +81,14 @@ class ComboResult:
             "format_compliance_rate": format_ok / total if total else 0,
             "all_correct_rate": success / total if total else 0,
         }
+
+        # judge 配置了才有 judge_score，按实际有分的子集聚合
+        judge_scores = [t.scores["judge_score"] for t in self.task_results if "judge_score" in t.scores]
+        if judge_scores:
+            self.summary["avg_judge_score"] = sum(judge_scores) / len(judge_scores)
+            judge_passed = [t.scores.get("judge_passed", 0.0) for t in self.task_results if "judge_score" in t.scores]
+            self.summary["judge_pass_rate"] = sum(judge_passed) / len(judge_passed)
+
         return self.summary
 
 

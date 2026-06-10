@@ -399,9 +399,10 @@ environments:
             encoding="utf-8",
         )
         (config_dir / "experiments" / "mock.yaml").write_text(
-            """
+            f"""
 experiment:
   name: "mock_eval"
+  output_dir: "{(root / 'outputs').as_posix()}"
   llm_profiles: [mock]
   harness_profiles: [raw]
   environments: [test_dialog]

@@ -58,7 +58,8 @@ class ExcelWriter:
         self._write_compare_sheet(ws_compare, experiment_result)
 
         # 保存
-        filename = f"{experiment_result.experiment_name}_{env_name}_report.xlsx"
+        stem = f"{experiment_result.experiment_name}_{env_name}" if env_name else experiment_result.experiment_name
+        filename = f"{stem}_report.xlsx"
         filepath = self.output_dir / filename
         wb.save(str(filepath))
         print(f"  Excel 报告已保存: {filepath}")

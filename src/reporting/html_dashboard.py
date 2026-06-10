@@ -121,7 +121,8 @@ class HTMLDashboard:
 
     def write(self, experiment_result: ExperimentResult, env_name: str = "") -> str:
         """生成 HTML 仪表盘。"""
-        filename = f"{experiment_result.experiment_name}_{env_name}_dashboard.html"
+        stem = f"{experiment_result.experiment_name}_{env_name}" if env_name else experiment_result.experiment_name
+        filename = f"{stem}_dashboard.html"
         filepath = self.output_dir / filename
 
         content = self._generate_html(experiment_result)

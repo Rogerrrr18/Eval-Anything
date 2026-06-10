@@ -30,6 +30,7 @@ include = ["src", "src.*"]
   "configs/environments.yaml",
   "configs/harness_profiles.yaml",
   "configs/judge_profiles.yaml",
+  "configs/judge_panels.yaml",
   "configs/llm_profiles.yaml",
   "configs/targets.yaml"
 ]

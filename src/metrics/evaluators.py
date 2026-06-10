@@ -511,12 +511,47 @@ class PanelLLMJudgeEvaluator:
         task: Any = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> EvaluationResult:
-        # 并发跑所有成员，asyncio.gather 让总延迟 ≈ max(per-judge)
-        member_results: List[EvaluationResult] = await asyncio.gather(*[
-            m.evaluate_async(prediction, reference, task=task, metadata=metadata)
-            for m in self.members
-        ])
-        return self._aggregate(member_results)
+        # 并发跑所有成员，asyncio.gather 让总延迟 ≈ max(per-judge)。
+        # return_exceptions=True：单个成员失败不报废整个 panel，
+        # 剩余成员降级聚合（这正是 panel 冗余的意义）。
+        raw_results = await asyncio.gather(
+            *[
+                m.evaluate_async(prediction, reference, task=task, metadata=metadata)
+                for m in self.members
+            ],
+            return_exceptions=True,
+        )
+
+        ok_results: List[EvaluationResult] = []
+        ok_names: List[str] = []
+        ok_families: List[str] = []
+        failed_members: List[Dict[str, str]] = []
+        for name, family, r in zip(self.member_names, self.member_families, raw_results):
+            if isinstance(r, BaseException):
+                logger.warning(f"Panel '{self.panel_name}' 成员 {name} 评分失败: {r}")
+                failed_members.append({"name": name, "family": family, "error": str(r)})
+            else:
+                ok_results.append(r)
+                ok_names.append(name)
+                ok_families.append(family)
+
+        if not ok_results:
+            return EvaluationResult(
+                score=0.0,
+                passed=False,
+                labels=["panel_all_failed"],
+                comment=f"Panel '{self.panel_name}' 所有成员评分均失败。",
+                details={
+                    "panel_name": self.panel_name,
+                    "failed_members": failed_members,
+                },
+            )
+
+        result = self._aggregate(ok_results, ok_names, ok_families)
+        if failed_members:
+            result.labels.append("member_failed")
+            result.details["failed_members"] = failed_members
+        return result
 
     def evaluate(self, prediction: Any, reference: Any = None) -> EvaluationResult:
         try:
@@ -531,7 +566,16 @@ class PanelLLMJudgeEvaluator:
         await asyncio.gather(*[m.close() for m in self.members])
 
     # ── 聚合 ────────────────────────────────────────────────────────────
-    def _aggregate(self, results: List[EvaluationResult]) -> EvaluationResult:
+    def _aggregate(
+        self,
+        results: List[EvaluationResult],
+        member_names: Optional[Sequence[str]] = None,
+        member_families: Optional[Sequence[str]] = None,
+    ) -> EvaluationResult:
+        # 成员失败被剔除后，names/families 必须和 results 对齐传入；
+        # 不传则默认全员都在（向后兼容）。
+        names = list(member_names) if member_names is not None else self.member_names
+        families = list(member_families) if member_families is not None else self.member_families
         n = len(results)
         scores = [r.score for r in results]
         agg_score = _aggregate_score(scores, self.aggregation)
@@ -565,7 +609,7 @@ class PanelLLMJudgeEvaluator:
 
         # comment 拼接，带成员前缀，方便报告里追溯
         comment_chunks = []
-        for name, r in zip(self.member_names, results):
+        for name, r in zip(names, results):
             if r.comment:
                 comment_chunks.append(f"[{name}] {r.comment}")
         merged_comment = "\n".join(comment_chunks)
@@ -585,7 +629,7 @@ class PanelLLMJudgeEvaluator:
 
         # member_details 完整保留，让 case study 能下钻
         member_details = []
-        for name, family, r in zip(self.member_names, self.member_families, results):
+        for name, family, r in zip(names, families, results):
             member_details.append({
                 "name": name,
                 "family": family,

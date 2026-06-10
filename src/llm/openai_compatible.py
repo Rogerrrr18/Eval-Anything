@@ -7,11 +7,25 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
+from urllib.parse import urlsplit
 
 import httpx
 
 from .base import BaseLLM, LLMConfig, LLMResponse
+
+
+def split_endpoint_url(endpoint_url: str) -> Tuple[str, str]:
+    """把完整 endpoint URL 拆成 (base_url, path)。
+
+    不做任何 "/v1" 字符串猜测——GLM 是 /api/paas/v4/...，
+    Gemini 是 /v1beta/openai/...，按子串切会把它们切坏。
+    path 为空时默认 /v1/chat/completions。
+    """
+    parts = urlsplit(endpoint_url)
+    base = f"{parts.scheme}://{parts.netloc}"
+    path = parts.path or "/v1/chat/completions"
+    return base, path
 
 
 class OpenAICompatibleLLM(BaseLLM):
@@ -23,20 +37,15 @@ class OpenAICompatibleLLM(BaseLLM):
 
     def __init__(self, config: LLMConfig):
         super().__init__(config)
+        base_url, self._chat_path = split_endpoint_url(config.endpoint_url)
         self._client = httpx.AsyncClient(
-            base_url=config.endpoint_url.rsplit("/v1", 1)[0] if "/v1" in config.endpoint_url else config.endpoint_url,
+            base_url=base_url,
             headers={
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {config.api_key}",
             },
             timeout=httpx.Timeout(config.timeout_seconds, connect=10.0),
         )
-        # 提取 endpoint_path（如 /v1/chat/completions）
-        base = config.endpoint_url
-        if "/v1" in base:
-            self._chat_path = "/v1/chat/completions"
-        else:
-            self._chat_path = base.split("://", 1)[-1].split("/", 1)[-1] if "/" in base.split("://", 1)[-1] else "/chat/completions"
 
     async def chat(
         self,
@@ -136,7 +145,7 @@ class OpenAICompatibleLLM(BaseLLM):
         usage = data.get("usage", {})
 
         content = message.get("content", "") or ""
-        reasoning = message.get("reasoning_content") or message.get("reasoning_content")
+        reasoning = message.get("reasoning_content") or message.get("reasoning")
 
         tool_calls = None
         if message.get("tool_calls"):

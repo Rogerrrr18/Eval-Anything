@@ -47,6 +47,7 @@ class ExperimentConfig:
     execution: ExecutionConfig = field(default_factory=ExecutionConfig)
     reporting: ReportingConfig = field(default_factory=ReportingConfig)
     pairwise_judge: Optional[str] = None  # 可选：pairwise 对比用的 judge 名字（来自 judge_profiles.yaml）
+    resume: bool = False  # CLI --resume 注入：跳过 stream JSONL 里已完成的任务（error/timeout 会重跑）
 
 
 # ── Profile 加载 ──

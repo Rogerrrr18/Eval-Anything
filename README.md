@@ -290,7 +290,24 @@ panel = PanelLLMJudgeEvaluator.from_panel_profile(
 result = await panel.evaluate_async(prediction, reference, task=task_prompt)
 ```
 
-Each judge's raw JSON output must contain: `score`, `passed`, `labels`, `comment`, `evidence`, `dimensions`. Panel `result.details["members"]` retains every member's raw verdict so case-study reports can drill in.
+Each judge's raw JSON output must contain: `score`, `passed`, `labels`, `comment`, `evidence`, `dimensions`. Panel `result.details["members"]` retains every member's raw verdict so case-study reports can drill in. If a panel member errors out mid-run, the panel **degrades to N-1** instead of failing — survivors aggregate as usual, the case gets a `member_failed` label, and the error is recorded in `details.failed_members`.
+
+**Judge calibration (optional).** How much should you trust the judge at all? Add a human-annotated `calibration_set` (JSONL with `human_score` / `human_passed` / `human_labels`) to any judged environment and the orchestrator measures judge↔human agreement after the main run — Pearson r, pass accuracy, macro-F1 — and shows the verdict as traffic-light cards in the HTML dashboard. Runs once per (env, judge) pair, no matter how many LLM combos share it:
+
+```yaml
+environments:
+  my_task:
+    judge_panel: default_panel
+    calibration_set: datasets/calibration/my_cal.jsonl   # ← opt-in, one line
+```
+
+**Pairwise mode + Elo ranking (optional).** Absolute scores are rubric-sensitive; "which answer is better" is what humans actually judge. Set `pairwise_judge` at the experiment level (needs ≥ 2 LLM profiles) and every pair of model outputs gets compared head-to-head — with position-swap to cancel order bias — then aggregated into an Elo leaderboard and a win matrix in the report:
+
+```yaml
+experiment:
+  llm_profiles: [gpt4o, claude_sonnet, qwen_max]
+  pairwise_judge: openai_judge          # ← opt-in, one line
+```
 
 ### 8. Reports
 
@@ -299,9 +316,16 @@ Each judge's raw JSON output must contain: `score`, `passed`, `labels`, `comment
 | Detail | Excel | Per-row results, field-level diff, errors highlighted |
 | Summary | Excel | Per-combo success rate and mean score |
 | Comparison | Excel | LLM × Harness success-rate heatmap |
-| Dashboard | HTML | Visual dashboard (heatmap + field analysis) |
-| Trajectories | JSONL | Full per-step execution log |
+| Dashboard | HTML | Heatmap, field analysis, judge dimension **radar charts**, Elo leaderboard + win matrix, calibration cards |
+| Machine summary | JSON | `<exp>_summary.json` — single machine-readable artifact for CI / scripting |
+| Trajectories | JSONL | Full per-step execution log, **streamed to disk as each task finishes** |
 | Case studies | Markdown | Failure clustering + representative cases |
+
+Crash mid-run? Results already on disk. Re-run with `--resume` to skip every task that has a recorded verdict (infra failures — `error` / `timeout` — are retried):
+
+```bash
+eval-anything --experiment my_exp --config-dir configs --resume
+```
 
 ### 9. Extending
 
@@ -564,7 +588,24 @@ panel = PanelLLMJudgeEvaluator.from_panel_profile(
 result = await panel.evaluate_async(prediction, reference, task=task_prompt)
 ```
 
-每个裁判原始 JSON 必须包含：`score`、`passed`、`labels`、`comment`、`evidence`、`dimensions`。Panel 的 `result.details["members"]` 完整保留每个成员的原始判定，case study 报告可下钻每个裁判看了什么。
+每个裁判原始 JSON 必须包含：`score`、`passed`、`labels`、`comment`、`evidence`、`dimensions`。Panel 的 `result.details["members"]` 完整保留每个成员的原始判定，case study 报告可下钻每个裁判看了什么。Panel 成员中途挂掉**不会报废整个 panel**——剩余成员降级聚合（N-1），该条加 `member_failed` 标签，错误记录在 `details.failed_members`。
+
+**Judge 校准（可选）。** judge 本身可不可信？给任何挂了 judge 的环境加一份人工标注的 `calibration_set`（JSONL，含 `human_score` / `human_passed` / `human_labels`），主任务跑完后自动测 judge↔人类一致性——Pearson r、pass 准确率、macro-F1——结果在 HTML 仪表盘以红绿灯卡片呈现。按 (env, judge) 只跑一次，多少个 LLM combo 共享都不重复花钱：
+
+```yaml
+environments:
+  my_task:
+    judge_panel: default_panel
+    calibration_set: datasets/calibration/my_cal.jsonl   # ← 可选，一行接入
+```
+
+**Pairwise 对比 + Elo 排名（可选）。** 绝对分对 rubric 措辞敏感；人类真正擅长的判断是"哪个回答更好"。在 experiment 级配 `pairwise_judge`（要求 ≥ 2 个 LLM profile），所有模型输出两两对比——自动 A/B 换位消除位置偏差——聚合成 Elo 排行榜 + win 矩阵进报告：
+
+```yaml
+experiment:
+  llm_profiles: [gpt4o, claude_sonnet, qwen_max]
+  pairwise_judge: openai_judge          # ← 可选，一行接入
+```
 
 ### 8. 输出报告
 
@@ -573,9 +614,16 @@ result = await panel.evaluate_async(prediction, reference, task=task_prompt)
 | 详细结果 | Excel | 逐条结果、字段对比、黄色标错 |
 | 统计汇总 | Excel | 每个组合的成功率、平均得分 |
 | 模型对比 | Excel | LLM × Harness 成功率热力图 |
-| 仪表盘 | HTML | 可视化看板（热力图、字段级分析） |
-| 轨迹日志 | JSONL | 完整执行步骤记录 |
+| 仪表盘 | HTML | 热力图、字段级分析、judge 维度**雷达图**、Elo 排行榜 + win 矩阵、校准卡片 |
+| 机读汇总 | JSON | `<exp>_summary.json` —— CI / 脚本集成的单一机读出口 |
+| 轨迹日志 | JSONL | 完整执行步骤记录，**每条任务完成即落盘** |
 | 案例研究 | Markdown | 失败分类、代表性案例、分析洞察 |
+
+中途崩溃？已完成的结果都在盘上。加 `--resume` 重跑会跳过所有已有评测结论的任务（`error` / `timeout` 这类基础设施故障会重试）：
+
+```bash
+eval-anything --experiment my_exp --config-dir configs --resume
+```
 
 ### 9. 扩展
 

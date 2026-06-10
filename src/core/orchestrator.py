@@ -105,6 +105,55 @@ def _create_env_from_profile(
     return create_environment(config, class_name=profile.class_name)
 
 
+def _trajectory_from_dict(data: Dict[str, Any]) -> Trajectory:
+    """从 stream JSONL 行重建 Trajectory（--resume 用）。"""
+    from ..harness.base import Action, StepRecord
+
+    steps: List[StepRecord] = []
+    for s in data.get("steps", []) or []:
+        raw_action = s.get("action") or {}
+        action = Action(
+            action_type=raw_action.get("action_type", "text_response"),
+            content=raw_action.get("content", ""),
+            tool_name=raw_action.get("tool_name"),
+            tool_args=raw_action.get("tool_args"),
+            metadata=raw_action.get("metadata", {}) or {},
+        )
+        steps.append(StepRecord(
+            step_number=s.get("step_number", 0),
+            observation=s.get("observation", ""),
+            thought=s.get("thought"),
+            action=action,
+            action_result=s.get("action_result", ""),
+            latency_ms=s.get("latency_ms", 0.0),
+            input_tokens=s.get("input_tokens", 0),
+            output_tokens=s.get("output_tokens", 0),
+            error=s.get("error"),
+        ))
+
+    return Trajectory(
+        experiment_name=data.get("experiment_name", ""),
+        task_id=data.get("task_id", ""),
+        llm_name=data.get("llm_name", ""),
+        harness_name=data.get("harness_name", ""),
+        env_name=data.get("env_name", ""),
+        steps=steps,
+        final_answer=data.get("final_answer", ""),
+        ground_truth=data.get("ground_truth"),
+        scores=data.get("scores", {}) or {},
+        total_input_tokens=data.get("total_input_tokens", 0),
+        total_output_tokens=data.get("total_output_tokens", 0),
+        total_latency_ms=data.get("total_latency_ms", 0.0),
+        status=data.get("status", "error"),
+        error_message=data.get("error_message"),
+        metadata=data.get("metadata", {}) or {},
+    )
+
+
+# resume 时这些状态视为"已有评测结论"，跳过；error/timeout 是基础设施故障，重跑
+_RESUMABLE_DONE_STATUSES = ("success", "partial", "failure")
+
+
 def _build_judge_for_env(
     env_profile: EnvironmentProfile,
     config_loader: ConfigLoader,
@@ -130,6 +179,10 @@ class Orchestrator:
     def __init__(self, config_loader: ConfigLoader):
         self.config_loader = config_loader
         self.logger = logging.getLogger("agent-eval")
+        # calibration 衡量 judge↔人类一致性，与被测 LLM 无关——
+        # 同一 (env, judge) 在多个 combo 间复用结果，避免重复花 judge token
+        self._calibration_cache: Dict[str, Dict[str, Any]] = {}
+        self._calibration_locks: Dict[str, asyncio.Lock] = {}
 
     async def run_experiment(self, experiment_config: ExperimentConfig) -> ExperimentResult:
         """运行完整实验。
@@ -225,6 +278,34 @@ class Orchestrator:
         tasks = self._load_tasks(env_profile)
         print(f"  加载 {len(tasks)} 条测试用例")
 
+        # 流式落盘：每条任务完成立刻 append 到 stream JSONL。
+        # 进程中途崩溃时已完成的结果不丢，--resume 可以从这里续跑。
+        stream_path = (
+            Path(exp_config.output_dir) / "trajectories" / "stream"
+            / f"{llm_name}__{harness_name}__{env_name}.jsonl"
+        )
+        stream_path.parent.mkdir(parents=True, exist_ok=True)
+
+        resumed: Dict[str, Trajectory] = {}
+        if exp_config.resume and stream_path.exists():
+            with open(stream_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        data = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if data.get("status") in _RESUMABLE_DONE_STATUSES:
+                        resumed[data.get("task_id", "")] = _trajectory_from_dict(data)
+            if resumed:
+                print(f"  断点续跑: 跳过 {len(resumed)} 条已完成任务")
+        elif not exp_config.resume and stream_path.exists():
+            stream_path.unlink()  # 全新运行，清掉旧 stream 避免和本次结果混淆
+
+        pending_tasks = [t for t in tasks if t.task_id not in resumed]
+
         # 按配置并发运行任务。Harness/Environment 都是有状态对象，
         # 所以每个任务创建独立实例，LLM client 共享。
         task_semaphore = asyncio.Semaphore(exp_config.execution.max_concurrent_tasks)
@@ -234,44 +315,62 @@ class Orchestrator:
                 harness = _create_harness_from_profile(harness_profile, llm)
                 env = _create_env_from_profile(env_profile, self.config_loader)
                 try:
-                    return await self._run_single_task(
-                        harness, env, task, exp_config, task_idx, len(tasks),
+                    traj = await self._run_single_task(
+                        harness, env, task, exp_config, task_idx, len(pending_tasks),
                         llm_name, harness_name, env_name,
                         judge=judge,
                     )
                 finally:
                     await env.close()
+                # 单事件循环内整行一次写入，无交错风险
+                with open(stream_path, "a", encoding="utf-8") as f:
+                    f.write(traj.to_jsonl() + "\n")
+                return traj
 
         calibration_data: Optional[Dict[str, Any]] = None
         try:
-            trajectories = await asyncio.gather(*[
+            new_trajectories = await asyncio.gather(*[
                 _run_task(task_idx, task)
-                for task_idx, task in enumerate(tasks)
+                for task_idx, task in enumerate(pending_tasks)
             ])
+            # 按数据集原始顺序合并 resumed + 新跑的
+            traj_by_id = {t.task_id: t for t in new_trajectories}
+            traj_by_id.update({tid: t for tid, t in resumed.items()})
+            trajectories = [
+                traj_by_id[t.task_id] for t in tasks if t.task_id in traj_by_id
+            ]
 
-            # 可选：judge 校准（主任务跑完后，关闭 judge 之前执行）
+            # 可选：judge 校准（主任务跑完后，关闭 judge 之前执行）。
+            # 结果按 (env, judge) 缓存——多个 LLM×Harness combo 共享同一 judge 时只跑一次。
             if env_profile.calibration_set and judge is not None:
-                print(f"  Judge 校准中: {env_profile.calibration_set}")
-                from ..metrics.calibration import run_calibration
-                try:
-                    cal = await run_calibration(
-                        judge,
-                        env_profile.calibration_set,
-                        project_root=self.config_loader.project_root,
-                    )
-                    calibration_data = {
-                        "n_samples": cal.n_samples,
-                        "n_evaluated": cal.n_evaluated,
-                        "score_pearson_r": cal.score_pearson_r,
-                        "pass_accuracy": cal.pass_accuracy,
-                        "label_macro_f1": cal.label_macro_f1,
-                        "per_label_f1": cal.per_label_f1,
-                        "warning": cal.warning,
-                    }
-                    r_str = f"{cal.score_pearson_r:.3f}" if cal.score_pearson_r is not None else "N/A"
-                    print(f"  校准完成: n={cal.n_samples}, pearson_r={r_str}")
-                except Exception as exc:
-                    self.logger.warning(f"judge 校准失败: {exc}")
+                cal_key = f"{env_name}::{env_profile.judge_panel or env_profile.judge}"
+                lock = self._calibration_locks.setdefault(cal_key, asyncio.Lock())
+                async with lock:
+                    if cal_key in self._calibration_cache:
+                        calibration_data = self._calibration_cache[cal_key]
+                    else:
+                        print(f"  Judge 校准中: {env_profile.calibration_set}")
+                        from ..metrics.calibration import run_calibration
+                        try:
+                            cal = await run_calibration(
+                                judge,
+                                env_profile.calibration_set,
+                                project_root=self.config_loader.project_root,
+                            )
+                            calibration_data = {
+                                "n_samples": cal.n_samples,
+                                "n_evaluated": cal.n_evaluated,
+                                "score_pearson_r": cal.score_pearson_r,
+                                "pass_accuracy": cal.pass_accuracy,
+                                "label_macro_f1": cal.label_macro_f1,
+                                "per_label_f1": cal.per_label_f1,
+                                "warning": cal.warning,
+                            }
+                            self._calibration_cache[cal_key] = calibration_data
+                            r_str = f"{cal.score_pearson_r:.3f}" if cal.score_pearson_r is not None else "N/A"
+                            print(f"  校准完成: n={cal.n_samples}, pearson_r={r_str}")
+                        except Exception as exc:
+                            self.logger.warning(f"judge 校准失败: {exc}")
         finally:
             await llm.close()
             if judge is not None:
@@ -306,21 +405,31 @@ class Orchestrator:
         """
         from ..metrics.pairwise import PairwiseLLMJudgeEvaluator, EloRanker
 
-        all_models: List[str] = list(dict.fromkeys(cr.llm_name for cr in combo_results))
+        # 参赛单位是 (LLM, Harness) 组合——多 harness 实验里同一 LLM 的不同
+        # harness 输出是不同的"选手"，不能互相覆盖。单 harness 时显示名退化为 LLM 名。
+        harness_names = {cr.harness_name for cr in combo_results}
+
+        def _competitor(cr: ComboResult) -> str:
+            if len(harness_names) == 1:
+                return cr.llm_name
+            return f"{cr.llm_name}+{cr.harness_name}"
+
+        all_models: List[str] = list(dict.fromkeys(_competitor(cr) for cr in combo_results))
         if len(all_models) < 2:
-            self.logger.warning("pairwise: 只有 1 个 LLM，跳过")
+            self.logger.warning("pairwise: 参赛组合不足 2 个，跳过")
             return None
 
         judge_profile = self.config_loader.get_judge_profile(exp_config.pairwise_judge)
         pairwise_judge = PairwiseLLMJudgeEvaluator.from_profile(judge_profile)
 
         try:
-            # task_id → [(model_name, final_answer), ...]（去重取最后一次输出）
+            # task_id → {competitor: final_answer}
             task_outputs: Dict[str, Dict[str, str]] = {}
             for cr in combo_results:
+                comp = _competitor(cr)
                 for traj in cr.task_results:
                     if traj.status not in ("error", "timeout"):
-                        task_outputs.setdefault(traj.task_id, {})[cr.llm_name] = traj.final_answer
+                        task_outputs.setdefault(traj.task_id, {})[comp] = traj.final_answer
 
             n_tasks = len(task_outputs)
             n_pairs = len(all_models) * (len(all_models) - 1) // 2
@@ -479,8 +588,8 @@ class Orchestrator:
                 final_answer=harness.get_final_answer(),
                 ground_truth=task.ground_truth,
                 scores={},
-                total_input_tokens=harness.get_total_tokens(),
-                total_output_tokens=0,
+                total_input_tokens=harness._total_input_tokens,
+                total_output_tokens=harness._total_output_tokens,
                 total_latency_ms=harness.get_total_latency(),
                 status="timeout",
                 error_message="任务执行超时",
@@ -497,8 +606,8 @@ class Orchestrator:
                 final_answer=harness.get_final_answer(),
                 ground_truth=task.ground_truth,
                 scores={},
-                total_input_tokens=harness.get_total_tokens(),
-                total_output_tokens=0,
+                total_input_tokens=harness._total_input_tokens,
+                total_output_tokens=harness._total_output_tokens,
                 total_latency_ms=harness.get_total_latency(),
                 status="error",
                 error_message=str(e),

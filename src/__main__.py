@@ -76,6 +76,10 @@ def parse_args() -> argparse.Namespace:
         "--dry-run", action="store_true",
         help="只打印将要运行的组合，不实际执行",
     )
+    parser.add_argument(
+        "--resume", action="store_true",
+        help="断点续跑：跳过 stream JSONL 里已有评测结论的任务（error/timeout 会重跑）",
+    )
 
     return parser.parse_args()
 
@@ -217,9 +221,28 @@ async def run_pipeline(args: argparse.Namespace) -> None:
 
     if args.output_dir:
         exp_config.output_dir = args.output_dir
+    exp_config.resume = args.resume
 
     if args.dry_run:
         import itertools
+        # dry-run 同时校验 profile 名拼写，typo 在这里就报，不用等真跑
+        errors = []
+        for name in exp_config.llm_profiles:
+            try:
+                config_loader.get_llm_profile(name)
+            except KeyError as e:
+                errors.append(str(e))
+        for name in exp_config.harness_profiles:
+            try:
+                config_loader.get_harness_profile(name)
+            except KeyError as e:
+                errors.append(str(e))
+        for name in exp_config.environments:
+            try:
+                config_loader.get_env_profile(name)
+            except KeyError as e:
+                errors.append(str(e))
+
         combos = list(itertools.product(
             exp_config.llm_profiles,
             exp_config.harness_profiles,
@@ -228,6 +251,11 @@ async def run_pipeline(args: argparse.Namespace) -> None:
         print(f"\n=== Dry Run: 将运行 {len(combos)} 个组合 ===\n")
         for llm, harness, env in combos:
             print(f"  LLM={llm}  Harness={harness}  Env={env}")
+        if errors:
+            print("\n⚠️  配置校验失败:")
+            for err in errors:
+                print(f"  - {err}")
+            sys.exit(1)
         print()
         return
 
@@ -249,8 +277,43 @@ async def run_pipeline(args: argparse.Namespace) -> None:
     CaseStudyWriter(os.path.join(exp_config.output_dir, "case_studies")).write(
         all_trajs, exp_config.name, case_count=exp_config.reporting.case_study_count
     )
+    write_summary_json(result, output_dir)
 
     print(f"\n✅ 所有报告已生成，保存在: {exp_config.output_dir}")
+
+
+def write_summary_json(result, output_dir: str) -> str:
+    """机读 summary —— CI / 脚本集成的单一出口。"""
+    from datetime import datetime, timezone
+
+    total = sum(len(cr.task_results) for cr in result.combo_results)
+    success = sum(
+        sum(1 for t in cr.task_results if t.status == "success")
+        for cr in result.combo_results
+    )
+    summary = {
+        "experiment": result.experiment_name,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "total_tasks": total,
+        "overall_success_rate": success / total if total else 0.0,
+        "combos": [
+            {
+                "llm": cr.llm_name,
+                "harness": cr.harness_name,
+                "env": cr.env_name,
+                **cr.summary,
+            }
+            for cr in result.combo_results
+        ],
+        **({"pairwise": result.pairwise} if result.pairwise else {}),
+    }
+
+    os.makedirs(output_dir, exist_ok=True)
+    path = os.path.join(output_dir, f"{result.experiment_name}_summary.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(summary, f, ensure_ascii=False, indent=2, default=str)
+    print(f"  机读 summary 已保存: {path}")
+    return path
 
 
 def main() -> None:

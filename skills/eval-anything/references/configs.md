@@ -368,6 +368,50 @@ export QWEN_JUDGE_MODEL=qwen2.5-72b-instruct
 
 Agent 看到用户说"我想 A/B 测一下两个裁判"或"先用便宜的 mini 跑一遍看看"时，应推荐这个用法，**不要**改 YAML（会污染 git）。
 
+## 5.4 Judge 校准（可选，`calibration_set`）
+
+衡量 judge 与人工标注的一致性。在 environments.yaml 的某个 env 上加：
+
+```yaml
+environments:
+  my_task:
+    judge_panel: default_panel
+    calibration_set: "datasets/calibration/my_cal.jsonl"   # 相对项目根
+```
+
+校准集 JSONL 每行（标注字段都可选，缺了对应指标就是 null）：
+
+```json
+{"task_id": "c1", "prediction": "...", "reference": "...", "human_score": 0.8, "human_passed": true, "human_labels": ["correct"]}
+```
+
+产出三个指标进 `combo.summary["calibration"]` + HTML 仪表盘红绿灯卡片：
+- `score_pearson_r`：judge 分 ↔ 人工分相关系数，≥0.7 可信
+- `pass_accuracy`：pass/fail 一致率，≥0.8 合格
+- `label_macro_f1`：label 多分类 macro-F1，≥0.5 合格
+
+按 (env, judge) 缓存，多 combo 共享不重复跑。**Agent 引导规则**：只有用户明确要"验证 judge 可信度"或已有人工标注数据时才建议；不要主动要求用户先去做人工标注。
+
+## 5.5 Pairwise 对比 + Elo（可选，`pairwise_judge`）
+
+experiment 级字段，要求 ≥ 2 个 llm_profiles：
+
+```yaml
+experiment:
+  llm_profiles: [model_a, model_b, model_c]
+  pairwise_judge: openai_judge      # 引用 judge_profiles.yaml
+```
+
+所有 combo 跑完后，每个 task 的输出两两对比（自动 A/B 换位消位置偏差，两次不一致判 tie），聚合成 Elo 排行 + win 矩阵，进 `result.pairwise` + summary.json + HTML 仪表盘。多 harness 实验里参赛单位是 `llm+harness` 组合。
+
+成本注意：judge 调用次数 = 任务数 × C(N,2) × 2。**Agent 在 Gate 4 必须把这个数乘出来告诉用户**再开跑。
+
+## 6. CLI 运行时增强
+
+- `--resume`：断点续跑。每条任务完成即写入 `outputs/<exp>/trajectories/stream/<llm>__<harness>__<env>.jsonl`；resume 时跳过已有 success/partial/failure 结论的任务，error/timeout 视为基础设施故障重跑。**用户的实验中断后，agent 默认推荐加这个 flag 恢复**。
+- `--dry-run`：会校验 profile 名拼写，typo 直接报错退出（exit 1）。
+- 跑完会在 reports/ 下产出 `<exp>_summary.json` 机读汇总（含每 combo 的 summary、calibration、pairwise），CI 集成读这个文件即可。
+
 ## 字段命名约定
 
 - profile 名：`<provider>_<model>_<variant>`，如 `deepseek_v4_flash`、`qwen3_4b`、`gpt4o_mini`

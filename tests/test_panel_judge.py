@@ -283,6 +283,58 @@ def test_panel_does_not_warn_when_diverse():
     assert warnings == []
 
 
+class _FailingJudge:
+    """evaluate_async 总是抛异常的假 judge（duck-typed）。"""
+
+    async def evaluate_async(self, prediction, reference=None, *, task=None, metadata=None):
+        raise RuntimeError("simulated member failure")
+
+    async def close(self):
+        return None
+
+
+def test_panel_degrades_when_one_member_fails():
+    """1/3 成员失败 → 剩余 2 个降级聚合，加 member_failed 标签，不抛异常。"""
+    judges = [
+        _make_judge("j1", "gpt-4o", {"score": 0.8, "passed": True, "labels": ["correct"]}),
+        _make_judge("j2", "claude-sonnet-4", {"score": 0.6, "passed": True, "labels": ["correct"]}),
+        _FailingJudge(),
+    ]
+    panel = PanelLLMJudgeEvaluator(
+        members=judges,
+        member_names=["j1", "j2", "j3"],
+        member_families=["openai", "anthropic", "qwen"],
+        disagreement_threshold=0.5,
+    )
+    result = asyncio.run(panel.evaluate_async("pred", "ref"))
+    # 2 个存活成员：mean of [0.8, 0.6] = 0.7 (n<3 → 算术平均)
+    assert abs(result.score - 0.7) < 1e-9
+    assert result.passed is True
+    assert "member_failed" in result.labels
+    assert "correct" in result.labels  # 2/2 存活成员同意，⌈2/2⌉=1 支持度满足
+    failed = result.details["failed_members"]
+    assert len(failed) == 1
+    assert failed[0]["name"] == "j3"
+    assert "simulated member failure" in failed[0]["error"]
+    # 存活成员的 member_details 对齐正确
+    member_names = [m["name"] for m in result.details["members"]]
+    assert member_names == ["j1", "j2"]
+
+
+def test_panel_all_members_fail_returns_error_result():
+    """全员失败 → 不抛异常，返回 panel_all_failed 结果。"""
+    panel = PanelLLMJudgeEvaluator(
+        members=[_FailingJudge(), _FailingJudge(), _FailingJudge()],
+        member_names=["j1", "j2", "j3"],
+        member_families=["openai", "anthropic", "qwen"],
+    )
+    result = asyncio.run(panel.evaluate_async("pred", "ref"))
+    assert result.score == 0.0
+    assert result.passed is False
+    assert "panel_all_failed" in result.labels
+    assert len(result.details["failed_members"]) == 3
+
+
 def test_panel_close_calls_all_members():
     judges = [
         _make_judge("j1", "gpt-4o", {"score": 0.8, "passed": True, "labels": []}),
