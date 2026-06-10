@@ -1,275 +1,143 @@
 # Eval-Anything
 
-模块化 **Agent 评测管线** + **Agent Skill**，支持 LLM × Harness × Environment 三维组合评测。
+A modular **agent skill** + **evaluation runtime** for LLM × Harness × Environment matrix benchmarking.
 
-两种用法（互不依赖）：
-- **作为 Python CLI** — 直接跑评测、出报告
-- **作为 Agent Skill** — 把 `skills/eval-anything/` 丢给任意 coding agent（Claude Code / Cursor Agent / ...），让它按 5 步 4 闸门流程驱动你完成完整评测
+**[English](#english)** · **[中文](#中文)**
 
 ---
 
-## 1. 装
+## English
+
+`skills/eval-anything/` is a self-contained agent skill: decision trees,
+auto-selection algorithm, templates, and a 4-gate human-in-the-loop
+protocol. Feed it to any coding agent (Claude Code, Cursor Agent, …) and
+the agent will drive a full evaluation for you using its own native
+`Read` / `Write` / `Edit` / `Bash` tools.
+
+### 1. Install
 
 ```bash
-# pipx 隔离（推荐）
+# pipx (isolated, recommended)
 pipx install "git+https://github.com/Rogerrrr18/Eval-Anything.git"
 
-# 或源码开发模式
+# or from source for development
 git clone https://github.com/Rogerrrr18/Eval-Anything.git
 cd Eval-Anything
 pip install -e .
 ```
 
----
+### 2. Drive it with a coding agent
 
-## 2. 用法 A：Python CLI（裸跑评测）
+#### With Claude Code
 
-```bash
-# 生成示例数据
-eval-anything --generate-sample-data
+Open a Claude Code session at the repo root and say:
 
-# 列出可用配置
-eval-anything --list-profiles --config-dir configs/
+> "Read `skills/eval-anything/SKILL.md` as your system prompt. I want
+> to run an eval / compare these models / add a new LLM / ..."
 
-# Dry run（不真跑，看将运行哪些组合）
-eval-anything --experiment slot_filling --dry-run --config-dir configs/
+The agent routes to the matching workflow in `skills/eval-anything/workflows/`
+and enforces 4 human-confirmation gates along the way.
 
-# 跑预设实验
-eval-anything --experiment slot_filling --config-dir configs/
+#### With any other coding agent
 
-# 指定单一组合
-eval-anything --llm deepseek_v4_flash --harness raw --env slot_filling_xiu --config-dir configs/
-```
+Anything that can read files and run a shell works. Tell it:
 
-安装后 `eval-anything` 与 `eval-agent` 等价（别名）。
+> "Read `skills/eval-anything/SKILL.md` and follow the workflow it
+> prescribes to design / run / interpret an evaluation. Ask me directly
+> at every human-confirmation gate."
 
----
-
-## 3. 用法 B：Agent Skill（让任意 coding agent 驱动你跑评测）
-
-`skills/eval-anything/` 是一份自包含的 **agent skill**：决策树、自动选择算法、模板、4 道人工闸门规约全在里面。**不绑定任何具体 agent / LLM**——你用 Claude Code 就 Claude Code，用 Cursor Agent 就 Cursor Agent，agent 用自己原生的 `Read`/`Write`/`Edit`/`Bash` 工具操作仓库即可。
-
-### 喂给 Claude Code
-
-在仓库根目录起一个 Claude Code 会话，告诉它：
-
-> "把 `skills/eval-anything/SKILL.md` 当作 system prompt 读进来。我想跑一个评测/对比这些模型/接入新 LLM/..."
-
-它会按 SKILL.md 里的入口路由分发到对应 workflow，并强制走 4 道闸门让你确认。
-
-### 喂给其他 coding agent
-
-任何能读文件 + 跑 shell 的 agent 都行。告诉它：
-
-> "Read `skills/eval-anything/SKILL.md`，按里面规定的流程帮我设计/运行/解读评测。所有人工确认环节直接向我提问。"
-
-### Skill 内部结构
+### 3. The skill, at a glance
 
 ```
 skills/eval-anything/
-├─ SKILL.md                          ← 入口路由（决策树 + 闸门规约）
-├─ references/                       ← Ground truth，agent 必须 Read 后再下笔
-│  ├─ cli.md                         CLI 参数手册
-│  ├─ configs.md                     4 类 YAML 的字段 schema
-│  ├─ datasets.md                    任务类型 → 开源测试集映射
-│  ├─ reports.md                     报告产物解读
-│  ├─ extending.md                   新增 LLM / Harness / Env 注册步骤
-│  └─ harness-selection.md           Harness 自动选择算法（Step 3 必读）
-├─ workflows/                        ← 流程剧本
-│  ├─ design-experiment.md           主流程：5 步 4 闸门
+├─ SKILL.md                          ← Entry point: routing + gate protocol
+├─ references/                       ← Ground truth — the agent MUST Read these
+│  ├─ cli.md                         CLI flag reference (used internally by the agent)
+│  ├─ configs.md                     Schema for the 4 YAML config kinds
+│  ├─ datasets.md                    Task type → open-source dataset map
+│  ├─ reports.md                     How to read evaluation outputs
+│  ├─ extending.md                   How to register new LLM / Harness / Env
+│  └─ harness-selection.md           Harness auto-selection algorithm
+├─ workflows/                        ← Step-by-step playbooks
+│  ├─ design-experiment.md           Main flow: 5 steps × 4 gates
 │  ├─ add-llm.md
 │  ├─ add-harness.md
 │  ├─ compare-models.md
 │  └─ mock-dataset.md
-└─ templates/                        ← Jinja 模板（agent 用 Write 工具落盘）
+└─ templates/                        ← Jinja templates the agent fills in via Write
    ├─ dataset.jsonl.j2
    ├─ environment.yaml.j2
    ├─ experiment.yaml.j2
    └─ mock_synthesis_prompt.md
 ```
 
-### 主流程：5 步 4 强制闸门
+### 4. Main flow: 5 steps × 4 mandatory gates
 
 ```
-Step 1: 任务类型识别        ──► 闸门 1（确认任务类型 + 评测维度）
-Step 2: 数据集来源选择      ──► 闸门 2（开源 / Mock / 自有 / 混合）
-                              └─ Mock 分支 ──► 闸门 2b（审核 3 条样例）
-Step 3: 自动选 harness + 生成配置 YAML
-                              ──► 闸门 3（看 diff 后确认写盘）
-Step 4: --dry-run 展示组合数 + 预估耗时
-                              ──► 闸门 4（开跑确认）
-Step 5: 跑完读报告 + 输出洞察小结
+Step 1: Identify task type        ──► Gate 1 (confirm task type + eval dims)
+Step 2: Pick dataset source       ──► Gate 2 (open-source / mock / yours / mix)
+                                     └─ Mock branch ──► Gate 2b (review 3 samples)
+Step 3: Auto-select harness +     ──► Gate 3 (review YAML diff, then write)
+        generate config YAML
+Step 4: Dry-run shows combos +    ──► Gate 4 (start the full run?)
+        ETA
+Step 5: Run + read report + write insight summary
 ```
 
-`workflows/design-experiment.md` 是主入口，**Step 3 的 harness 选择由 agent 按 `references/harness-selection.md` 内嵌算法自动算**，不再单独问用户"你要 raw 还是 react"——只在闸门 3 的 diff 里展示决策依据让用户拍板。
+The agent does **not** ask "do you want raw or react?" — Step 3 runs
+the algorithm in `references/harness-selection.md` automatically and
+shows its reasoning in Gate 3.
 
----
-
-## 4. 架构
+### 5. Architecture
 
 ```
 ┌─────────────┐   ┌─────────────┐   ┌─────────────┐
-│  LLM 层     │   │ Harness 层  │   │Environment层 │
-│ (可替换后端) │   │ (可替换架构) │   │ (可替换环境) │
+│  LLM layer  │   │Harness layer│   │   Env layer │
+│  (backend)  │   │(agent arch) │   │   (task)    │
 └──────┬──────┘   └──────┬──────┘   └──────┬──────┘
        └──────────┬──────┴──────────┬──────┘
                   ▼                 ▼
            ┌────────────┐    ┌──────────────┐
-           │Orchestrator│    │ Metrics 引擎 │
-           │ (核心调度) │    │ (定量+定性)  │
+           │Orchestrator│    │Metrics engine│
            └──────┬─────┘    └──────┬───────┘
                   ▼                 ▼
          ┌──────────────────────────────┐
-         │  报告生成                    │
+         │  Reports                     │
          │  Excel | HTML | JSONL | MD   │
          └──────────────────────────────┘
 ```
 
-### 三层可替换组件
-
-| 层 | 说明 | 已实现 |
+| Layer | Description | Built-in |
 |----|------|--------|
-| **LLM** | 大模型后端 | `OpenAICompatibleLLM` (vLLM/SGLang/Ollama/任何 OpenAI 兼容 API)、`MockLLM` |
-| **Harness** | Agent 架构 | `RawHarness` (baseline)、`ReActHarness`、`FunctionCallHarness` |
-| **Environment** | 任务环境 | `DialogEnvironment` (槽位填充 / JSONL 数据集)，可扩展 |
+| **LLM** | Model backend | `OpenAICompatibleLLM` (any OpenAI-compatible API: vLLM / SGLang / Ollama / DeepSeek / Qwen / Kimi / GLM …), `MockLLM` |
+| **Harness** | Agent architecture | `RawHarness` (baseline), `ReActHarness`, `FunctionCallHarness` |
+| **Environment** | Task environment | `DialogEnvironment` (slot filling / JSONL datasets), extensible |
 
----
+### 6. Config reference
 
-## 5. 配置说明
-
-所有配置都在 `--config-dir` 指定的目录里（默认 `./configs/`）。
-
-### LLM 配置 (`configs/llm_profiles.yaml`)
+All config lives under `--config-dir` (default `./configs/`). The agent
+will read and write these files for you; the schemas are documented in
+`skills/eval-anything/references/configs.md`.
 
 ```yaml
+# configs/llm_profiles.yaml
 llm_profiles:
   my_model:
     class: "OpenAICompatibleLLM"
     model_name: "my-model"
     endpoint_url: "http://your-host:port/v1/chat/completions"
-    api_key_env: "MY_MODEL_API_KEY"   # 推荐：从环境变量读
-    # 或：api_key: "${MY_MODEL_API_KEY}"   # 也支持 ${VAR} 内联占位
+    api_key_env: "MY_MODEL_API_KEY"   # read from env var
+    # or:  api_key: "${MY_MODEL_API_KEY}"   # inline placeholder
     temperature: 0.0
     max_tokens: 600
 ```
 
-兼容所有 OpenAI API 兼容的推理服务（vLLM / SGLang / LMStudio / Ollama / DeepSeek / Qwen / Kimi / GLM 等）。**绝不要把真实 key 写进 yaml**——用 `api_key_env` 或 `${VAR}` 占位。
+> **Never** write real API keys into YAML. Use `api_key_env` or `${VAR}`.
 
-### Harness 配置 (`configs/harness_profiles.yaml`)
-
-```yaml
-harness_profiles:
-  raw:
-    class: "RawHarness"
-    max_steps: 1
-    description: "直接 prompt-in / response-out 基线"
-```
-
-### Environment 配置 (`configs/environments.yaml`)
+### 7. LLM-as-Judge
 
 ```yaml
-environments:
-  my_task:
-    class: "DialogEnvironment"
-    dataset: "datasets/my_task.jsonl"
-    extra_params:
-      slot_keys: [field1, field2, ...]
-```
-
-支持 `.jsonl`、`.json`、`.xlsx` 三种数据格式。
-
-### 实验配置 (`configs/experiments/*.yaml`)
-
-```yaml
-experiment:
-  name: "my_eval"
-  llm_profiles: [model_a, model_b]
-  harness_profiles: [raw, react]
-  environments: [task_a, task_b]
-```
-
----
-
-## 6. 数据格式
-
-### JSONL（推荐）
-
-```json
-{
-  "task_id": "repair_001",
-  "task_type": "slot_filling",
-  "prompt": "用户输入文本...",
-  "expected_slots": {"product_name": "空调", ...},
-  "slot_keys": ["product_name", "product_brand", ...]
-}
-```
-
-### Excel
-
-`.xlsx` 文件，需包含 `conversation_id`、`dialogue_count`、`query` 等列以及各槽位列。自动解析多轮对话。
-
----
-
-## 7. 输出报告
-
-| 报告 | 格式 | 内容 |
-|------|------|------|
-| 详细结果 | Excel | 逐条结果、字段对比、黄色标错 |
-| 统计汇总 | Excel | 每个组合的成功率、平均得分 |
-| 模型对比 | Excel | LLM × Harness 成功率热力图 |
-| 仪表盘 | HTML | 可视化看板（热力图、字段级分析） |
-| 轨迹日志 | JSONL | 完整执行步骤记录 |
-| 案例研究 | Markdown | 失败分类、代表性案例、分析洞察 |
-
----
-
-## 8. 扩展
-
-### 添加新 LLM
-
-1. 在 `src/llm/` 下创建新类，继承 `BaseLLM`
-2. 实现 `chat()` / `chat_stream()` / `chat_with_tools()`
-3. 在 `configs/llm_profiles.yaml` 中添加 profile
-
-### 添加新 Harness
-
-1. 在 `src/harness/` 下创建新类，继承 `BaseHarness`
-2. 实现 `initial_action()` / `next_action()` / `is_finished()`
-3. 在 `src/core/orchestrator.py` 的 `_HARNESS_REGISTRY` 注册
-4. 在 `configs/harness_profiles.yaml` 中添加 profile
-
-### 添加新 Environment
-
-1. 在 `src/environment/` 下创建新类，继承 `BaseEnvironment`
-2. 实现 `reset()` / `step()` / `get_reward()`
-3. 在 `src/environment/__init__.py` 的 `_ENV_REGISTRY` 注册
-4. 在 `configs/environments.yaml` 中添加 profile
-
-详见 `skills/eval-anything/references/extending.md`。
-
----
-
-## 9. 评测指标
-
-### 定量指标
-- 任务完成率（全对比例）
-- 字段级准确率
-- JSON 格式合规率
-- Token 使用效率
-- 平均完成步数
-- 错误恢复率
-
-### 定性分析
-- 失败模式自动分类
-- 成功模式统计
-- 接近成功案例（Near Misses）
-- LLM × Harness 对比洞察
-
-### LLM-as-Judge
-
-在 `configs/judge_profiles.yaml` 中配置裁判模型：
-
-```yaml
+# configs/judge_profiles.yaml
 judge_profiles:
   default_judge:
     class: "OpenAICompatibleLLM"
@@ -278,10 +146,8 @@ judge_profiles:
     api_key_env: "JUDGE_API_KEY"
     threshold: 0.6
     rubric: |
-      请根据任务、参考答案和模型输出进行评审，只输出合法 JSON。
+      Evaluate the model output against the reference. Return JSON only.
 ```
-
-代码中使用：
 
 ```python
 from src.core.config import ConfigLoader
@@ -293,30 +159,227 @@ judge = LLMJudgeEvaluator.from_profile(profile)
 result = await judge.evaluate_async(prediction, reference, task=task_prompt)
 ```
 
-Judge 需返回 JSON：`score`、`passed`、`labels`、`comment`、`evidence`、`dimensions`。
+Judge response JSON: `score`, `passed`, `labels`, `comment`, `evidence`, `dimensions`.
+
+### 8. Reports
+
+| Report | Format | Content |
+|------|------|------|
+| Detail | Excel | Per-row results, field-level diff, errors highlighted |
+| Summary | Excel | Per-combo success rate and mean score |
+| Comparison | Excel | LLM × Harness success-rate heatmap |
+| Dashboard | HTML | Visual dashboard (heatmap + field analysis) |
+| Trajectories | JSONL | Full per-step execution log |
+| Case studies | Markdown | Failure clustering + representative cases |
+
+### 9. Extending
+
+- **New LLM** → subclass `BaseLLM` in `src/llm/`, then add a profile in `configs/llm_profiles.yaml`
+- **New Harness** → subclass `BaseHarness` in `src/harness/`, register in `_HARNESS_REGISTRY`, add a profile
+- **New Environment** → subclass `BaseEnvironment` in `src/environment/`, register in `_ENV_REGISTRY`, add a profile
+
+Full steps in `skills/eval-anything/references/extending.md`.
+
+### 10. Star monitor
+
+A zero-dependency GitHub-star dashboard ships with the repo (pure static HTML):
+
+```bash
+open tools/star_dashboard.html        # macOS
+xdg-open tools/star_dashboard.html    # Linux
+start tools/star_dashboard.html       # Windows
+```
+
+It hits the GitHub stargazers API and draws:
+
+- Total stars + week-over-week delta
+- Cumulative star curve (by real `starred_at` timestamps)
+- Daily new stars (last 30 days) + weekly new stars (last 12 weeks)
+- Recent stargazers (avatar + date)
+
+Defaults to `Rogerrrr18/Eval-Anything`; change the input at the top to
+watch any public repo. Unauthenticated quota is 60/h; paste a personal
+access token to bump to 5000/h.
 
 ---
 
-## 10. Star 监控面板
+## 中文
 
-仓库自带一个零依赖的 **GitHub Star 监控仪表盘**（纯静态 HTML，无需后端、无需 token）：
+`skills/eval-anything/` 是一份**自包含的 agent skill**：决策树、自动选择算法、模板、4 道人工闸门规约全在里面。把它喂给任意 coding agent（Claude Code、Cursor Agent 等），agent 用自己原生的 `Read` / `Write` / `Edit` / `Bash` 工具就能驱动你跑完整轮评测。
+
+### 1. 安装
 
 ```bash
-# macOS
-open tools/star_dashboard.html
+# pipx 隔离（推荐）
+pipx install "git+https://github.com/Rogerrrr18/Eval-Anything.git"
 
-# Linux
-xdg-open tools/star_dashboard.html
-
-# Windows
-start tools/star_dashboard.html
+# 或源码开发模式
+git clone https://github.com/Rogerrrr18/Eval-Anything.git
+cd Eval-Anything
+pip install -e .
 ```
 
-页面会调 GitHub 公开 API 拉本仓库的 stargazers 数据，画出：
+### 2. 让 coding agent 驱动评测
+
+#### Claude Code
+
+在仓库根目录起一个 Claude Code 会话，告诉它：
+
+> "把 `skills/eval-anything/SKILL.md` 当作 system prompt 读进来。我想跑一个评测 / 对比这些模型 / 接入新 LLM / …"
+
+它会按 SKILL.md 入口路由分发到对应 workflow，并强制走 4 道闸门让你确认。
+
+#### 其他 coding agent
+
+任何能读文件 + 跑 shell 的 agent 都行。告诉它：
+
+> "Read `skills/eval-anything/SKILL.md`，按里面规定的流程帮我设计/运行/解读评测。所有人工确认环节直接向我提问。"
+
+### 3. Skill 内部结构
+
+```
+skills/eval-anything/
+├─ SKILL.md                          ← 入口路由（决策树 + 闸门规约）
+├─ references/                       ← Ground truth，agent 必须 Read 后再下笔
+│  ├─ cli.md                         CLI 参数手册（agent 内部调用用）
+│  ├─ configs.md                     4 类 YAML 的字段 schema
+│  ├─ datasets.md                    任务类型 → 开源测试集映射
+│  ├─ reports.md                     报告产物解读
+│  ├─ extending.md                   新增 LLM / Harness / Env 注册步骤
+│  └─ harness-selection.md           Harness 自动选择算法
+├─ workflows/                        ← 流程剧本
+│  ├─ design-experiment.md           主流程：5 步 4 闸门
+│  ├─ add-llm.md
+│  ├─ add-harness.md
+│  ├─ compare-models.md
+│  └─ mock-dataset.md
+└─ templates/                        ← Jinja 模板，agent 用 Write 工具落盘
+   ├─ dataset.jsonl.j2
+   ├─ environment.yaml.j2
+   ├─ experiment.yaml.j2
+   └─ mock_synthesis_prompt.md
+```
+
+### 4. 主流程：5 步 4 强制闸门
+
+```
+Step 1: 任务类型识别        ──► 闸门 1（确认任务类型 + 评测维度）
+Step 2: 数据集来源选择      ──► 闸门 2（开源 / Mock / 自有 / 混合）
+                              └─ Mock 分支 ──► 闸门 2b（审核 3 条样例）
+Step 3: 自动选 harness +    ──► 闸门 3（看 YAML diff 后确认写盘）
+        生成配置 YAML
+Step 4: --dry-run 展示组合数 + 预估耗时
+                              ──► 闸门 4（开跑确认）
+Step 5: 跑完读报告 + 输出洞察小结
+```
+
+Step 3 不会问 "你要 raw 还是 react"——agent 按 `references/harness-selection.md` 内嵌算法**自动算**，只在闸门 3 的 diff 里展示决策依据让用户拍板。
+
+### 5. 架构
+
+```
+┌─────────────┐   ┌─────────────┐   ┌─────────────┐
+│  LLM 层     │   │ Harness 层  │   │Environment层 │
+│ (可替换后端) │   │ (可替换架构) │   │ (可替换环境) │
+└──────┬──────┘   └──────┬──────┘   └──────┬──────┘
+       └──────────┬──────┴──────────┬──────┘
+                  ▼                 ▼
+           ┌────────────┐    ┌──────────────┐
+           │Orchestrator│    │ Metrics 引擎 │
+           └──────┬─────┘    └──────┬───────┘
+                  ▼                 ▼
+         ┌──────────────────────────────┐
+         │  报告生成                    │
+         │  Excel | HTML | JSONL | MD   │
+         └──────────────────────────────┘
+```
+
+| 层 | 说明 | 已实现 |
+|----|------|--------|
+| **LLM** | 大模型后端 | `OpenAICompatibleLLM`（任何 OpenAI 兼容 API：vLLM / SGLang / Ollama / DeepSeek / Qwen / Kimi / GLM …）、`MockLLM` |
+| **Harness** | Agent 架构 | `RawHarness` (baseline)、`ReActHarness`、`FunctionCallHarness` |
+| **Environment** | 任务环境 | `DialogEnvironment`（槽位填充 / JSONL 数据集），可扩展 |
+
+### 6. 配置说明
+
+所有配置都在 `--config-dir` 指向的目录里（默认 `./configs/`），agent 会替你读写它们；字段 schema 见 `skills/eval-anything/references/configs.md`。
+
+```yaml
+# configs/llm_profiles.yaml
+llm_profiles:
+  my_model:
+    class: "OpenAICompatibleLLM"
+    model_name: "my-model"
+    endpoint_url: "http://your-host:port/v1/chat/completions"
+    api_key_env: "MY_MODEL_API_KEY"   # 推荐：从环境变量读
+    # 或：api_key: "${MY_MODEL_API_KEY}"   # 也支持 ${VAR} 内联占位
+    temperature: 0.0
+    max_tokens: 600
+```
+
+> **绝不要**把真实 key 写进 yaml。用 `api_key_env` 或 `${VAR}` 占位。
+
+### 7. LLM-as-Judge
+
+```yaml
+# configs/judge_profiles.yaml
+judge_profiles:
+  default_judge:
+    class: "OpenAICompatibleLLM"
+    model_name: "your-judge-model"
+    endpoint_url: "https://your-endpoint/v1/chat/completions"
+    api_key_env: "JUDGE_API_KEY"
+    threshold: 0.6
+    rubric: |
+      请根据任务、参考答案和模型输出进行评审，只输出合法 JSON。
+```
+
+```python
+from src.core.config import ConfigLoader
+from src.metrics import LLMJudgeEvaluator
+
+loader = ConfigLoader("configs")
+profile = loader.get_judge_profile("default_judge")
+judge = LLMJudgeEvaluator.from_profile(profile)
+result = await judge.evaluate_async(prediction, reference, task=task_prompt)
+```
+
+Judge 返回 JSON：`score`、`passed`、`labels`、`comment`、`evidence`、`dimensions`。
+
+### 8. 输出报告
+
+| 报告 | 格式 | 内容 |
+|------|------|------|
+| 详细结果 | Excel | 逐条结果、字段对比、黄色标错 |
+| 统计汇总 | Excel | 每个组合的成功率、平均得分 |
+| 模型对比 | Excel | LLM × Harness 成功率热力图 |
+| 仪表盘 | HTML | 可视化看板（热力图、字段级分析） |
+| 轨迹日志 | JSONL | 完整执行步骤记录 |
+| 案例研究 | Markdown | 失败分类、代表性案例、分析洞察 |
+
+### 9. 扩展
+
+- **新 LLM** → `src/llm/` 下继承 `BaseLLM`，再到 `configs/llm_profiles.yaml` 加 profile
+- **新 Harness** → `src/harness/` 下继承 `BaseHarness`，注册到 `_HARNESS_REGISTRY`，加 profile
+- **新 Environment** → `src/environment/` 下继承 `BaseEnvironment`，注册到 `_ENV_REGISTRY`，加 profile
+
+完整步骤见 `skills/eval-anything/references/extending.md`。
+
+### 10. Star 监控面板
+
+仓库自带一个零依赖的 GitHub Star 监控仪表盘（纯静态 HTML，无后端无 token 也能跑）：
+
+```bash
+open tools/star_dashboard.html        # macOS
+xdg-open tools/star_dashboard.html    # Linux
+start tools/star_dashboard.html       # Windows
+```
+
+页面调 GitHub stargazers API 画出：
 
 - 当前总 star 数 + 与上周对比
-- 累计 star 曲线（按真实 starred_at 时间戳）
-- 最近 30 天每日新增
+- 累计 star 曲线（按真实 `starred_at` 时间戳）
+- 最近 30 天每日新增 + 最近 12 周每周新增
 - 最近 stargazers 列表（头像 + 时间）
 
-默认监控 `Rogerrrr18/Eval-Anything`。**改顶部 `REPO` 常量**可以盯任意公开仓库。未鉴权请求每小时 60 次配额（足够日常刷新）；如果想长期跑，给 URL 加 `?token=ghp_xxx` 提升到 5000/h。
+默认监控 `Rogerrrr18/Eval-Anything`；改顶部输入框可盯任意公开仓库。未鉴权配额 60 次/小时；填一个 PAT 可提升到 5000 次/小时。
