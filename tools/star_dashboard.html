@@ -1,0 +1,420 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Eval-Anything · Star Monitor</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #7d8590;
+    --accent: #f9d850;
+    --green: #3fb950;
+    --red: #f85149;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; }
+  body { padding: 24px; max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; font-weight: 600; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
+  .sub a { color: var(--accent); text-decoration: none; }
+  .sub a:hover { text-decoration: underline; }
+
+  .controls { display: flex; gap: 12px; flex-wrap: wrap; align-items: center;
+    margin-bottom: 20px; padding: 12px 14px; background: var(--panel);
+    border: 1px solid var(--border); border-radius: 8px; font-size: 13px; }
+  .controls label { color: var(--muted); }
+  .controls input, .controls button { background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); padding: 6px 10px; border-radius: 6px;
+    font-family: inherit; font-size: 13px; }
+  .controls input:focus { outline: 1px solid var(--accent); }
+  .controls button { cursor: pointer; }
+  .controls button:hover { border-color: var(--accent); }
+  .controls .status { color: var(--muted); margin-left: auto; }
+
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 20px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: 18px 20px; }
+  .card .label { color: var(--muted); font-size: 12px; text-transform: uppercase;
+    letter-spacing: 0.5px; margin-bottom: 6px; }
+  .card .value { font-size: 28px; font-weight: 700; line-height: 1.1; }
+  .card .delta { font-size: 12px; margin-top: 6px; }
+  .delta.up { color: var(--green); }
+  .delta.down { color: var(--red); }
+  .delta.flat { color: var(--muted); }
+
+  .chart-card { background: var(--panel); border: 1px solid var(--border);
+    border-radius: 8px; padding: 18px 20px; margin-bottom: 20px; }
+  .chart-card h2 { margin: 0 0 14px; font-size: 14px; font-weight: 600;
+    color: var(--text); letter-spacing: 0.3px; }
+  .chart-wrap { position: relative; height: 260px; }
+
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 800px) {
+    .grid { grid-template-columns: 1fr; }
+    .row2 { grid-template-columns: 1fr; }
+  }
+
+  .stargazers { background: var(--panel); border: 1px solid var(--border);
+    border-radius: 8px; padding: 18px 20px; }
+  .stargazers h2 { margin: 0 0 14px; font-size: 14px; font-weight: 600; }
+  .gz-list { display: flex; flex-wrap: wrap; gap: 10px; }
+  .gz { display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 999px;
+    font-size: 12px; color: var(--text); text-decoration: none; }
+  .gz:hover { border-color: var(--accent); }
+  .gz img { width: 22px; height: 22px; border-radius: 50%; }
+  .gz .date { color: var(--muted); margin-left: 4px; }
+
+  .err { color: var(--red); padding: 12px; background: var(--panel);
+    border: 1px solid var(--red); border-radius: 8px; margin-bottom: 16px; font-size: 13px; }
+  .loading { color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+
+<h1>⭐ Star Monitor</h1>
+<div class="sub">
+  <span id="repo-link"></span> · GitHub stargazers API · 数据每次打开页面即时拉取
+</div>
+
+<div class="controls">
+  <label>仓库</label>
+  <input id="repo-input" size="32" placeholder="owner/repo">
+  <label>Token (可选)</label>
+  <input id="token-input" type="password" size="20" placeholder="ghp_… (提升到 5000/h)">
+  <button id="reload-btn">刷新</button>
+  <span class="status" id="status">等待加载…</span>
+</div>
+
+<div id="error-box"></div>
+
+<div class="grid">
+  <div class="card">
+    <div class="label">Total stars</div>
+    <div class="value" id="total-stars">—</div>
+    <div class="delta flat" id="delta-7d">—</div>
+  </div>
+  <div class="card">
+    <div class="label">Last 7 days</div>
+    <div class="value" id="last-7d">—</div>
+    <div class="delta flat" id="rate-7d">— / day</div>
+  </div>
+  <div class="card">
+    <div class="label">Last 30 days</div>
+    <div class="value" id="last-30d">—</div>
+    <div class="delta flat" id="rate-30d">— / day</div>
+  </div>
+</div>
+
+<div class="chart-card">
+  <h2>累计 stars（按 starred_at 时间戳）</h2>
+  <div class="chart-wrap"><canvas id="cum-chart"></canvas></div>
+</div>
+
+<div class="row2">
+  <div class="chart-card">
+    <h2>最近 30 天每日新增</h2>
+    <div class="chart-wrap"><canvas id="daily-chart"></canvas></div>
+  </div>
+  <div class="chart-card">
+    <h2>最近 12 周每周新增</h2>
+    <div class="chart-wrap"><canvas id="weekly-chart"></canvas></div>
+  </div>
+</div>
+
+<div class="stargazers">
+  <h2>最近 stargazers</h2>
+  <div class="gz-list" id="gz-list"><span class="loading">加载中…</span></div>
+</div>
+
+<script>
+const DEFAULT_REPO = "Rogerrrr18/Eval-Anything";
+const LS_REPO = "star_monitor_repo";
+const LS_TOKEN = "star_monitor_token";
+
+const $ = (id) => document.getElementById(id);
+
+let cumChart = null, dailyChart = null, weeklyChart = null;
+
+function fmtNum(n) {
+  return n.toLocaleString("en-US");
+}
+
+function fmtDate(d) {
+  return d.toISOString().slice(0, 10);
+}
+
+function setStatus(msg) { $("status").textContent = msg; }
+function setError(msg) {
+  const box = $("error-box");
+  if (!msg) { box.innerHTML = ""; return; }
+  box.innerHTML = `<div class="err">${msg}</div>`;
+}
+
+function setDelta(elId, n) {
+  const el = $(elId);
+  el.textContent = (n > 0 ? "+" : "") + fmtNum(n) + " vs 7d ago";
+  el.className = "delta " + (n > 0 ? "up" : n < 0 ? "down" : "flat");
+}
+
+async function ghFetch(url, token) {
+  const headers = { "Accept": "application/vnd.github.star+json" };
+  if (token) headers["Authorization"] = "Bearer " + token;
+  const res = await fetch(url, { headers });
+  if (!res.ok) {
+    if (res.status === 403) {
+      throw new Error("GitHub 限流（403）。未鉴权 60 次/小时；可填 Personal Access Token 提升到 5000 次/小时。");
+    }
+    if (res.status === 404) {
+      throw new Error("仓库不存在或无权访问：" + url);
+    }
+    throw new Error("GitHub API " + res.status + ": " + (await res.text()).slice(0, 200));
+  }
+  return { json: await res.json(), link: res.headers.get("Link") };
+}
+
+function parseLastPage(linkHeader) {
+  if (!linkHeader) return 1;
+  const m = linkHeader.match(/<[^>]*[?&]page=(\d+)[^>]*>;\s*rel="last"/);
+  return m ? parseInt(m[1], 10) : 1;
+}
+
+async function fetchRepoMeta(repo, token) {
+  const headers = {};
+  if (token) headers["Authorization"] = "Bearer " + token;
+  const res = await fetch(`https://api.github.com/repos/${repo}`, { headers });
+  if (!res.ok) throw new Error("无法读取仓库元信息：" + res.status);
+  return await res.json();
+}
+
+async function fetchAllStargazers(repo, token, onProgress) {
+  // First page to learn total page count
+  const first = await ghFetch(
+    `https://api.github.com/repos/${repo}/stargazers?per_page=100&page=1`, token
+  );
+  const lastPage = parseLastPage(first.link);
+  let all = first.json.slice();
+  onProgress(1, lastPage);
+
+  for (let p = 2; p <= lastPage; p++) {
+    const r = await ghFetch(
+      `https://api.github.com/repos/${repo}/stargazers?per_page=100&page=${p}`, token
+    );
+    all = all.concat(r.json);
+    onProgress(p, lastPage);
+  }
+  // Sort ascending by starred_at
+  all.sort((a, b) => new Date(a.starred_at) - new Date(b.starred_at));
+  return all;
+}
+
+function bucketByDay(stargazers, days) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const buckets = new Map();
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - i);
+    buckets.set(fmtDate(d), 0);
+  }
+  for (const sg of stargazers) {
+    const d = new Date(sg.starred_at);
+    d.setHours(0, 0, 0, 0);
+    const key = fmtDate(d);
+    if (buckets.has(key)) buckets.set(key, buckets.get(key) + 1);
+  }
+  return [...buckets.entries()];
+}
+
+function bucketByWeek(stargazers, weeks) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  // align to monday
+  const dow = today.getDay() || 7;
+  today.setDate(today.getDate() - (dow - 1));
+  const buckets = [];
+  for (let i = weeks - 1; i >= 0; i--) {
+    const start = new Date(today);
+    start.setDate(start.getDate() - i * 7);
+    buckets.push({ label: fmtDate(start), start: start, count: 0 });
+  }
+  for (const sg of stargazers) {
+    const d = new Date(sg.starred_at);
+    for (let i = buckets.length - 1; i >= 0; i--) {
+      if (d >= buckets[i].start) { buckets[i].count++; break; }
+    }
+  }
+  return buckets.map(b => [b.label, b.count]);
+}
+
+function buildCumulative(stargazers) {
+  // For large lists, downsample for chart
+  const pts = [];
+  let runningTotal = 0;
+  const step = Math.max(1, Math.floor(stargazers.length / 400));
+  for (let i = 0; i < stargazers.length; i++) {
+    runningTotal++;
+    if (i % step === 0 || i === stargazers.length - 1) {
+      pts.push({ x: stargazers[i].starred_at, y: runningTotal });
+    }
+  }
+  return pts;
+}
+
+function renderCharts(stargazers) {
+  const cumPts = buildCumulative(stargazers);
+  const daily = bucketByDay(stargazers, 30);
+  const weekly = bucketByWeek(stargazers, 12);
+
+  const baseOpts = {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { ticks: { color: "#7d8590", font: { size: 11 } }, grid: { color: "#21262d" } },
+      y: { ticks: { color: "#7d8590", font: { size: 11 } }, grid: { color: "#21262d" }, beginAtZero: true },
+    },
+  };
+
+  if (cumChart) cumChart.destroy();
+  cumChart = new Chart($("cum-chart"), {
+    type: "line",
+    data: {
+      datasets: [{
+        data: cumPts.map(p => ({ x: p.x, y: p.y })),
+        borderColor: "#f9d850", backgroundColor: "rgba(249,216,80,0.12)",
+        fill: true, tension: 0.15, pointRadius: 0, borderWidth: 2,
+      }],
+    },
+    options: {
+      ...baseOpts,
+      parsing: false,
+      scales: {
+        ...baseOpts.scales,
+        x: {
+          type: "time",
+          time: { unit: cumPts.length > 100 ? "month" : "week" },
+          ticks: baseOpts.scales.x.ticks,
+          grid: baseOpts.scales.x.grid,
+        },
+      },
+    },
+  });
+
+  if (dailyChart) dailyChart.destroy();
+  dailyChart = new Chart($("daily-chart"), {
+    type: "bar",
+    data: {
+      labels: daily.map(([d]) => d.slice(5)),
+      datasets: [{ data: daily.map(([, c]) => c),
+        backgroundColor: "#3fb950", borderRadius: 3 }],
+    },
+    options: baseOpts,
+  });
+
+  if (weeklyChart) weeklyChart.destroy();
+  weeklyChart = new Chart($("weekly-chart"), {
+    type: "bar",
+    data: {
+      labels: weekly.map(([d]) => d.slice(5)),
+      datasets: [{ data: weekly.map(([, c]) => c),
+        backgroundColor: "#58a6ff", borderRadius: 3 }],
+    },
+    options: baseOpts,
+  });
+}
+
+function renderStargazerList(stargazers, repo) {
+  const recent = stargazers.slice(-40).reverse();
+  const html = recent.map(sg => {
+    const u = sg.user;
+    const d = sg.starred_at.slice(0, 10);
+    return `<a class="gz" href="${u.html_url}" target="_blank" rel="noopener">
+      <img src="${u.avatar_url}&s=40" alt="">
+      <span>${u.login}</span><span class="date">${d}</span>
+    </a>`;
+  }).join("");
+  $("gz-list").innerHTML = html || "<span class='loading'>暂无 stargazers</span>";
+}
+
+function computeStats(stargazers) {
+  const total = stargazers.length;
+  const now = Date.now();
+  const day = 24 * 3600 * 1000;
+  let n7 = 0, n14 = 0, n30 = 0;
+  for (const sg of stargazers) {
+    const age = now - new Date(sg.starred_at).getTime();
+    if (age < 7 * day) n7++;
+    if (age < 14 * day) n14++;
+    if (age < 30 * day) n30++;
+  }
+  const prev7 = n14 - n7;
+  return { total, n7, n30, delta7: n7 - prev7 };
+}
+
+async function load() {
+  setError("");
+  const repo = $("repo-input").value.trim() || DEFAULT_REPO;
+  const token = $("token-input").value.trim();
+  localStorage.setItem(LS_REPO, repo);
+  if (token) localStorage.setItem(LS_TOKEN, token);
+  else localStorage.removeItem(LS_TOKEN);
+
+  $("repo-link").innerHTML =
+    `仓库：<a href="https://github.com/${repo}" target="_blank" rel="noopener">${repo}</a>`;
+  document.title = `⭐ ${repo} · Star Monitor`;
+
+  setStatus("拉取仓库元信息…");
+  try {
+    const meta = await fetchRepoMeta(repo, token);
+    $("total-stars").textContent = fmtNum(meta.stargazers_count);
+
+    setStatus("拉取 stargazers (第 1 页)…");
+    const stargazers = await fetchAllStargazers(repo, token, (p, total) => {
+      setStatus(`拉取 stargazers (${p}/${total})…`);
+    });
+
+    const stats = computeStats(stargazers);
+    $("total-stars").textContent = fmtNum(stats.total);
+    $("last-7d").textContent = fmtNum(stats.n7);
+    $("last-30d").textContent = fmtNum(stats.n30);
+    $("rate-7d").textContent = (stats.n7 / 7).toFixed(1) + " / day";
+    $("rate-30d").textContent = (stats.n30 / 30).toFixed(1) + " / day";
+    setDelta("delta-7d", stats.delta7);
+
+    renderCharts(stargazers);
+    renderStargazerList(stargazers, repo);
+
+    setStatus(`完成 · ${stats.total} stars · ${new Date().toLocaleTimeString()}`);
+  } catch (e) {
+    console.error(e);
+    setError(e.message);
+    setStatus("失败");
+  }
+}
+
+// chart.js time-scale needs an adapter; load lazily
+function loadAdapter(cb) {
+  const s = document.createElement("script");
+  s.src = "https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js";
+  s.onload = cb;
+  document.head.appendChild(s);
+}
+
+window.addEventListener("DOMContentLoaded", () => {
+  $("repo-input").value = localStorage.getItem(LS_REPO) || DEFAULT_REPO;
+  $("token-input").value = localStorage.getItem(LS_TOKEN) || "";
+  $("reload-btn").addEventListener("click", load);
+  $("repo-input").addEventListener("keydown", (e) => { if (e.key === "Enter") load(); });
+  $("token-input").addEventListener("keydown", (e) => { if (e.key === "Enter") load(); });
+  loadAdapter(load);
+});
+</script>
+
+</body>
+</html>
