@@ -18,7 +18,7 @@
 
 ### Repo: **[github.com/Rogerrrr18/Eval-Anything](https://github.com/Rogerrrr18/Eval-Anything)**
 
-[Star History](#star-history) · [Skill](skills/eval-anything/SKILL.md)
+[English](#english) · [中文](#中文) · [Star History](#star-history) · [Skill](skills/eval-anything/SKILL.md)
 
 <sub>One pipeline. Any coding agent (Claude Code · Cursor · Codex · Gemini CLI · …) drives it.<br/>Plug in your LLM via OpenAI-compatible endpoint — vLLM, SGLang, Ollama, DeepSeek, Qwen, Kimi, GLM.</sub>
 
