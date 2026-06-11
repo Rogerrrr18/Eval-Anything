@@ -153,6 +153,31 @@ tasks/my_suite/my_task/
 This mirrors AlphaEval's environment model: the task directory itself carries
 the prompt, visible files, hidden evaluation assets, and scoring logic.
 
+**Bring your own Target.** Need to evaluate a CLI tool, a Python library, a
+stdio agent, or an MCP server? Subclass `BaseTarget` and register it — the
+extension point is ~10 lines:
+
+```python
+from src.target import BaseTarget, TargetResponse, register_target
+
+class MyCLITarget(BaseTarget):
+    capabilities = ["run"]                           # what operations you handle
+
+    async def invoke(self, operation, payload, *, task=None):
+        # call your tool however you want; never raise — wrap failures
+        # into TargetResponse(error=...) so the eval pipeline keeps going.
+        result = await do_my_thing(**payload)
+        return TargetResponse(content=result)
+
+register_target("MyCLITarget", MyCLITarget)
+```
+
+After that, any environment can point at it via YAML (`class: MyCLITarget`).
+`eval-anything --list-targets` shows everything currently registered. We
+deliberately ship only HTTPAppTarget + MockTarget out of the box — every other
+target shape needs a paired Environment that knows how to call it, so we let
+you write that pair together instead of half-supplying it.
+
 ### 6. Config reference
 
 All config lives under `--config-dir` (default `./configs/`). The agent
@@ -452,6 +477,29 @@ tasks/my_suite/my_task/
 
 这和 AlphaEval 的环境理解一致：一个 task 目录本身携带 prompt、可见文件、
 隐藏评测资产和评分逻辑。
+
+**自带 Target.** 要评测 CLI 工具、Python 库、stdio agent、MCP 服务器？子类化
+`BaseTarget` 再注册一行就行，~10 行代码：
+
+```python
+from src.target import BaseTarget, TargetResponse, register_target
+
+class MyCLITarget(BaseTarget):
+    capabilities = ["run"]                           # 声明支持哪些 operation
+
+    async def invoke(self, operation, payload, *, task=None):
+        # 怎么调你的工具都行；**不要抛异常**——失败包成
+        # TargetResponse(error=...) 返回，让评测流水线继续走
+        result = await do_my_thing(**payload)
+        return TargetResponse(content=result)
+
+register_target("MyCLITarget", MyCLITarget)
+```
+
+之后任何 environment 都能在 YAML 里 `class: MyCLITarget` 引用它，`eval-anything
+--list-targets` 也会列出来。我们故意只内置 HTTPAppTarget + MockTarget——其他形态
+（CLI / Python / stdio / MCP）都需要一个**配套的 Environment** 才能真正跑起来，
+所以让你和你的 Env 一起写，比我们给你半套强。
 
 ### 6. 配置说明
 

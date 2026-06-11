@@ -6,7 +6,6 @@ instead of treating every benchmark subject as a bare LLM model.
 """
 from __future__ import annotations
 
-import os
 import time
 from typing import Any, Dict
 
@@ -16,17 +15,38 @@ from .base import BaseTarget, TargetConfig, TargetResponse
 
 
 class HTTPAppTarget(BaseTarget):
-    """Generic HTTP target using operation -> endpoint mapping."""
+    """HTTP / REST 适配器 — 通用 `operation -> endpoint` 路由。
+
+    适合：RAG 服务（RAGFlow / Dify / 自建）、Workflow API、任意已部署的 web 服务。
+
+    YAML 示例：
+        targets:
+          my_rag:
+            class: HTTPAppTarget
+            base_url: "https://my-rag.example.com"
+            endpoints:
+              chat: "/api/v1/chat"
+              search: "/api/v1/search"
+            headers:
+              X-Tenant: "demo"
+            api_key_env: "RAG_API_KEY"
+            extra_params:
+              auth_header: "Authorization"          # 默认 Authorization
+              auth_prefix: "Bearer"                 # 默认 Bearer
+              methods:                              # 默认 POST
+                search: "GET"
+    """
 
     def __init__(self, config: TargetConfig):
         super().__init__(config)
         headers = dict(config.headers)
-        api_key = os.getenv(config.api_key_env or "", "") or config.api_key
+        api_key = self._resolve_api_key()
         auth_header = config.extra_params.get("auth_header", "Authorization")
         auth_prefix = config.extra_params.get("auth_prefix", "Bearer")
         if api_key and api_key != "EMPTY" and auth_header not in headers:
             headers[auth_header] = f"{auth_prefix} {api_key}".strip()
 
+        self.capabilities = list(config.endpoints.keys())
         self._client = httpx.AsyncClient(
             base_url=config.base_url.rstrip("/"),
             headers=headers,

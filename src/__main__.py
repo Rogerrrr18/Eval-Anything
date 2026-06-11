@@ -69,6 +69,8 @@ def parse_args() -> argparse.Namespace:
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
     )
     parser.add_argument("--list-profiles", action="store_true", help="列出所有可用配置")
+    parser.add_argument("--list-targets", action="store_true",
+                        help="列出所有已注册的 Target 类（内置 HTTPAppTarget / MockTarget + register_target 注册的第三方）")
     parser.add_argument("--generate-sample-data", action="store_true", help="生成示例测试数据")
     parser.add_argument("--no-excel", action="store_true", help="跳过 Excel 报告")
     parser.add_argument("--no-html", action="store_true", help="跳过 HTML 仪表盘")
@@ -318,6 +320,16 @@ def write_summary_json(result, output_dir: str) -> str:
 
 def main() -> None:
     args = parse_args()
+
+    if args.list_targets:
+        from src.target import list_available_targets, _TARGET_REGISTRY
+        print("\n=== 已注册的 Target 类 ===\n")
+        for name in list_available_targets():
+            cls = _TARGET_REGISTRY[name]
+            doc = (cls.__doc__ or "").strip().split("\n", 1)[0]
+            print(f"  {name:<22} {doc}")
+        print("\n自定义：子类化 BaseTarget 后调 register_target(name, cls)。")
+        return
 
     if args.list_profiles:
         list_profiles(ConfigLoader(config_dir=args.config_dir))

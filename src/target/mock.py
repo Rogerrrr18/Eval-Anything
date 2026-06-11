@@ -9,7 +9,17 @@ from .base import BaseTarget, TargetConfig, TargetResponse
 
 
 class MockTarget(BaseTarget):
-    """Queue-based target adapter that returns configured responses."""
+    """队列式 mock 适配器，每次 invoke 弹出预设响应。仅用于离线测试。
+
+    YAML 示例：
+        targets:
+          mock_app:
+            class: MockTarget
+            extra_params:
+              responses:
+                - "first reply"
+                - {"answer": "second reply", "score": 0.9}
+    """
 
     def __init__(self, config: TargetConfig):
         super().__init__(config)
